@@ -1,0 +1,105 @@
+name: Release
+
+# Build, sign, and publish a release of `spool` to PyPI.
+#
+# Triggered only by pushing a tag that matches v*.*.* (e.g. v0.2.0).
+# Uses PyPI Trusted Publishers (OIDC) so no long-lived API token is
+# stored in GitHub Secrets. Wheels and sdists are signed via Sigstore;
+# the Sigstore bundle is published as a GitHub Release asset and
+# installable via `sigstore verify`.
+#
+# To cut a release:
+#   1. Bump version in pyproject.toml on a release branch.
+#   2. Open a PR. After it lands on main, tag it: `git tag v0.2.0 && git push --tags`.
+#   3. This workflow runs and publishes to PyPI.
+#   4. Verify the upload with the snippet in SECURITY.md.
+#
+# One-time setup (see .github/EXTERNAL_ACTIONS.md):
+#   - Configure PyPI Trusted Publisher for project `spool` to trust this repo
+#     and this workflow file.
+#   - Enable mandatory 2FA on the GitHub org.
+#   - Add a `pypi` deployment environment to the repo for review gating.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build wheel and sdist
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build==1.2.2
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  sign:
+    name: Sign with Sigstore
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Sign distributions
+        uses: sigstore/gh-action-sigstore-python@v3.0.0
+        with:
+          inputs: ./dist/*.tar.gz ./dist/*.whl
+          upload-signing-artifacts: true
+          release-signing-artifacts: true
+
+  publish:
+    name: Publish to PyPI
+    needs: sign
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/spool
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI via Trusted Publisher
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          attestations: true
