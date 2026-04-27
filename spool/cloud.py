@@ -104,31 +104,44 @@ def cloud_logout():
     console.print("[green]Logged out.[/green]")
 
 
-def _collect_sessions(limit: int, since: datetime | None) -> list[dict]:
-    """Read up to `limit` sessions newer than `since` from the local DB."""
+def _collect_sessions(
+    limit: int,
+    since: datetime | None,
+    project: str | None = None,
+    cwd_substr: str | None = None,
+) -> list[dict]:
+    """Read up to `limit` sessions newer than `since` from the local DB.
+
+    Optional ``project`` matches sessions whose ``project`` column equals
+    that string (case-sensitive). Optional ``cwd_substr`` matches sessions
+    whose ``cwd`` contains the substring (use this for path-based filtering
+    when you have multiple projects with the same name).
+    """
     conn = get_connection()
     try:
-        if since is None:
-            rows = conn.execute(
-                """SELECT id, provider_id, project, title, cwd, started_at, ended_at,
-                          message_count, tool_call_count,
-                          estimated_input_tokens, estimated_output_tokens, estimated_cost_usd
-                   FROM sessions
-                   ORDER BY started_at DESC NULLS LAST
-                   LIMIT %s""",
-                (limit,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """SELECT id, provider_id, project, title, cwd, started_at, ended_at,
-                          message_count, tool_call_count,
-                          estimated_input_tokens, estimated_output_tokens, estimated_cost_usd
-                   FROM sessions
-                   WHERE started_at IS NULL OR started_at >= %s
-                   ORDER BY started_at DESC NULLS LAST
-                   LIMIT %s""",
-                (since, limit),
-            ).fetchall()
+        clauses: list[str] = []
+        params: list = []
+        if since is not None:
+            clauses.append("(started_at IS NULL OR started_at >= %s)")
+            params.append(since)
+        if project is not None:
+            clauses.append("project = %s")
+            params.append(project)
+        if cwd_substr is not None:
+            clauses.append("cwd LIKE %s")
+            params.append(f"%{cwd_substr}%")
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        rows = conn.execute(
+            f"""SELECT id, provider_id, project, title, cwd, started_at, ended_at,
+                       message_count, tool_call_count,
+                       estimated_input_tokens, estimated_output_tokens, estimated_cost_usd
+                FROM sessions
+                {where}
+                ORDER BY started_at DESC NULLS LAST
+                LIMIT %s""",
+            tuple(params),
+        ).fetchall()
         sessions = []
         for r in rows:
             sid = r["id"]
@@ -191,13 +204,46 @@ def _push_batches(sessions: list[dict], batch: int, base: str, headers: dict, lo
 @click.command()
 @click.option("--limit", default=100, help="Max sessions to push per run")
 @click.option("--batch", default=20, help="Sessions per request")
-def push(limit: int, batch: int):
-    """Push local sessions up to Spooling Cloud."""
+@click.option(
+    "--project",
+    default=None,
+    help="Only push sessions whose project name matches exactly. Pair with `spool stats --by project` to discover names.",
+)
+@click.option(
+    "--cwd",
+    "cwd_substr",
+    default=None,
+    help="Only push sessions whose working directory contains this substring. Useful when you have multiple checkouts of the same project.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show which sessions would be pushed and exit. No network call.",
+)
+def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, dry_run: bool):
+    """Push local sessions up to Spooling Cloud.
+
+    Without filters, this pushes the most recent ``--limit`` sessions from
+    every project on this laptop into the workspace your CLI is logged
+    into. Pass ``--project`` or ``--cwd`` to scope which sessions go up.
+    Common pattern: log in with a team-workspace key, push only that
+    project's sessions, leave everything else local.
+    """
     headers = _auth_headers()
     base = _api_base()
-    sessions = _collect_sessions(limit=limit, since=None)
+    sessions = _collect_sessions(
+        limit=limit, since=None, project=project, cwd_substr=cwd_substr,
+    )
     if not sessions:
-        console.print("[yellow]No local sessions to push.[/yellow]")
+        console.print("[yellow]No local sessions match.[/yellow]")
+        return
+    if dry_run:
+        console.print(f"[dim]Dry run: {len(sessions)} session(s) would push to {base}[/dim]")
+        for s in sessions[:20]:
+            title = (s.get("title") or "(untitled)")[:60]
+            console.print(f"  [cyan]{s.get('project') or '-'}[/cyan]  {title}")
+        if len(sessions) > 20:
+            console.print(f"  ... and {len(sessions) - 20} more")
         return
     total, err = _push_batches(sessions, batch, base, headers, console.print)
     if err:
