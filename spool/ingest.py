@@ -266,19 +266,31 @@ def sync(embed: bool = True, provider_filter: str | None = None):
     conn = get_connection()
     connected = _get_connected_providers(conn)
 
+    # Always supplement the DB-connected list with any provider that
+    # `spool init` would detect as locally available but doesn't yet have a
+    # row in the providers table. Skip providers that DO have a row but
+    # aren't 'connected' (user explicitly disabled). Lets a fresh install
+    # of e.g. Kiro start syncing on the next `spool sync` without forcing
+    # the user back through the Connections page.
+    known_types = {row["type"] for row in conn.execute("SELECT type FROM providers").fetchall()}
+    from spool.providers import get_all_providers
+    for type_id, prov in get_all_providers().items():
+        if type_id in known_types:
+            continue
+        if prov.is_available():
+            connected.append({
+                "id": type_id,
+                "type": type_id,
+                "data_path": str(prov.default_data_path()),
+            })
+
     if provider_filter:
         connected = [p for p in connected if p["type"] == provider_filter]
 
     if not connected:
-        console.print("[yellow]No connected providers found. Connect one via the UI or run 'spool sync' after connecting Claude Code.[/yellow]")
-        # Fall back to Claude Code if it's not in the DB yet but data exists
-        from spool.providers.claude_code import ClaudeCodeProvider
-        cc = ClaudeCodeProvider()
-        if cc.is_available():
-            connected = [{"id": "claude-code", "type": "claude-code", "data_path": str(cc.default_data_path())}]
-        else:
-            conn.close()
-            return
+        console.print("[yellow]No providers to sync. Run 'spool init' to see what's detected locally, or connect one via the UI.[/yellow]")
+        conn.close()
+        return
 
     synced = _get_synced_files(conn)
     grand_total_sessions = 0
