@@ -180,11 +180,17 @@ def _collect_sessions(
         conn.close()
 
 
-def _push_batches(sessions: list[dict], batch: int, base: str, headers: dict, log) -> tuple[int, str | None]:
-    """POST sessions to /v1/sessions/batch in chunks. Returns (accepted, error)."""
+def _push_batches(sessions: list[dict], batch: int, base: str, headers: dict, log) -> tuple[int, int, str | None]:
+    """POST sessions to /v1/sessions/batch in chunks.
+
+    Returns ``(accepted, rejected, error)``. The cloud rejects sessions
+    whose IDs are already owned by another workspace; the CLI surfaces
+    that count so the user can react (delete + re-push, typically).
+    """
     if not sessions:
-        return 0, None
+        return 0, 0, None
     total = 0
+    rejected = 0
     with httpx.Client(timeout=60) as client:
         for i in range(0, len(sessions), batch):
             chunk = sessions[i:i + batch]
@@ -192,13 +198,19 @@ def _push_batches(sessions: list[dict], batch: int, base: str, headers: dict, lo
                 r = client.post(f"{base}/v1/sessions/batch", headers=headers, json={"sessions": chunk})
                 r.raise_for_status()
                 data = r.json()
-                total += data.get("accepted", 0)
-                log(f"  pushed {data.get('accepted', 0)} sessions")
+                accepted = data.get("accepted", 0)
+                rej = data.get("rejected", 0)
+                total += accepted
+                rejected += rej
+                if rej:
+                    log(f"  pushed {accepted} sessions  [yellow]rejected {rej}[/yellow]")
+                else:
+                    log(f"  pushed {accepted} sessions")
             except httpx.HTTPStatusError as e:
-                return total, f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                return total, rejected, f"HTTP {e.response.status_code}: {e.response.text[:200]}"
             except Exception as e:
-                return total, str(e)
-    return total, None
+                return total, rejected, str(e)
+    return total, rejected, None
 
 
 @click.command()
@@ -245,11 +257,22 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, dr
         if len(sessions) > 20:
             console.print(f"  ... and {len(sessions) - 20} more")
         return
-    total, err = _push_batches(sessions, batch, base, headers, console.print)
+    total, rejected, err = _push_batches(sessions, batch, base, headers, console.print)
     if err:
         console.print(f"[red]{err}[/red]")
         return
-    console.print(f"[green]Done.[/green] {total} sessions synced to {base}")
+    if rejected:
+        console.print(
+            f"[green]Done.[/green] {total} sessions synced to {base} "
+            f"([yellow]{rejected} rejected — IDs already owned by another workspace[/yellow])"
+        )
+        console.print(
+            "[dim]To move them: log in with a key for the workspace that "
+            "currently owns them, run `spool cloud delete --cwd <substr>`, "
+            "then log back in with the destination workspace's key and `spool push` again.[/dim]"
+        )
+    else:
+        console.print(f"[green]Done.[/green] {total} sessions synced to {base}")
 
 
 @cloud.command("watch")
@@ -291,7 +314,7 @@ def cloud_watch(interval: int, limit: int, batch: int, lookback: int):
         if sessions:
             ts = cycle_started.strftime("%H:%M:%S")
             console.print(f"[dim]{ts}[/dim] {len(sessions)} candidate session(s) since {since or 'beginning'}")
-            total, err = _push_batches(sessions, batch, base, headers, console.print)
+            total, rejected, err = _push_batches(sessions, batch, base, headers, console.print)
             if err:
                 console.print(f"[red]{err}[/red] (will retry next cycle)")
             else:
@@ -302,7 +325,8 @@ def cloud_watch(interval: int, limit: int, batch: int, lookback: int):
                 cfg = _load_config()
                 cfg["last_push_at"] = watermark.isoformat()
                 _save_config(cfg)
-                console.print(f"  [green]✓[/green] {total} accepted · watermark → {watermark.strftime('%H:%M:%S')}")
+                rej_note = f" · [yellow]{rejected} rejected (cross-workspace)[/yellow]" if rejected else ""
+                console.print(f"  [green]✓[/green] {total} accepted{rej_note} · watermark → {watermark.strftime('%H:%M:%S')}")
         # else: silent — no new work this cycle.
 
         # Sleep in 1s slices so Ctrl+C is responsive even with long intervals.
@@ -312,3 +336,90 @@ def cloud_watch(interval: int, limit: int, batch: int, lookback: int):
             slept += 1
 
     console.print("[green]Stopped.[/green]")
+
+
+@cloud.command("delete")
+@click.option(
+    "--project",
+    default=None,
+    help="Delete cloud sessions whose project name matches exactly.",
+)
+@click.option(
+    "--cwd",
+    "cwd_substr",
+    default=None,
+    help="Delete cloud sessions whose working directory contains this substring.",
+)
+@click.option(
+    "--all",
+    "delete_all",
+    is_flag=True,
+    help="Delete every session in the workspace this key authenticates to. Requires --yes.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Print which sessions would be deleted and exit. No network mutation.",
+)
+@click.option(
+    "--yes",
+    is_flag=True,
+    help="Skip the confirmation prompt. Required with --all.",
+)
+def cloud_delete(project: str | None, cwd_substr: str | None, delete_all: bool, dry_run: bool, yes: bool):
+    """Delete cloud sessions in the workspace this key authenticates to.
+
+    Use this when a session ID is owned by the wrong workspace (typically
+    after pushing personal sessions and then trying to push them again to
+    a team workspace). Delete from the wrong workspace, then `spool push`
+    under the right workspace's key.
+
+    Filters scope what gets deleted. Without filters, --all is required.
+    """
+    if not (project or cwd_substr or delete_all):
+        console.print("[red]Pass --project, --cwd, or --all.[/red]")
+        return
+    if delete_all and not yes:
+        console.print("[red]--all is destructive. Re-run with --yes to confirm.[/red]")
+        return
+
+    headers = _auth_headers()
+    base = _api_base()
+    params = {"dry_run": "true" if dry_run else "false"}
+    if project:
+        params["project"] = project
+    if cwd_substr:
+        params["cwd_substr"] = cwd_substr
+
+    try:
+        with httpx.Client(timeout=60) as client:
+            r = client.delete(f"{base}/v1/sessions", headers=headers, params=params)
+        if r.status_code == 404:
+            console.print(
+                "[red]This Spooling Cloud doesn't support `spool cloud delete` yet "
+                "(server is older than 2026-04-27). Ask your admin to redeploy.[/red]"
+            )
+            return
+        r.raise_for_status()
+        data = r.json()
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]HTTP {e.response.status_code}: {e.response.text[:200]}[/red]")
+        return
+    except Exception as e:
+        console.print(f"[red]{e}[/red]")
+        return
+
+    matched = data.get("matched", 0)
+    deleted = data.get("deleted", 0)
+    sessions = data.get("sessions") or []
+
+    if dry_run:
+        console.print(f"[dim]Dry run: {matched} session(s) would be deleted from {base}[/dim]")
+        for s in sessions[:20]:
+            title = (s.get("title") or "(untitled)")[:60]
+            console.print(f"  [cyan]{s.get('project') or '-'}[/cyan]  {title}")
+        if matched > 20:
+            console.print(f"  ... and {matched - 20} more")
+        return
+
+    console.print(f"[green]Deleted[/green] {deleted} session(s) from {base}")
