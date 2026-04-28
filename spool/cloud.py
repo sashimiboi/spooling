@@ -113,9 +113,11 @@ def _collect_sessions(
     """Read up to `limit` sessions newer than `since` from the local DB.
 
     Optional ``project`` matches sessions whose ``project`` column equals
-    that string (case-sensitive). Optional ``cwd_substr`` matches sessions
-    whose ``cwd`` contains the substring (use this for path-based filtering
-    when you have multiple projects with the same name).
+    that string (case-insensitive). Optional ``cwd_substr`` matches sessions
+    whose ``cwd`` contains the substring (case-insensitive; use this for
+    path-based filtering when you have multiple projects with the same
+    name, e.g. ``--cwd islet`` matches ``/Users/x/IsletIQ`` and
+    ``/Users/x/isletiq-landing``).
     """
     conn = get_connection()
     try:
@@ -125,10 +127,10 @@ def _collect_sessions(
             clauses.append("(started_at IS NULL OR started_at >= %s)")
             params.append(since)
         if project is not None:
-            clauses.append("project = %s")
+            clauses.append("LOWER(project) = LOWER(%s)")
             params.append(project)
         if cwd_substr is not None:
-            clauses.append("cwd LIKE %s")
+            clauses.append("cwd ILIKE %s")
             params.append(f"%{cwd_substr}%")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
