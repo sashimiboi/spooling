@@ -109,15 +109,16 @@ def _collect_sessions(
     since: datetime | None,
     project: str | None = None,
     cwd_substr: str | None = None,
+    title_substr: str | None = None,
 ) -> list[dict]:
     """Read up to `limit` sessions newer than `since` from the local DB.
 
-    Optional ``project`` matches sessions whose ``project`` column equals
-    that string (case-insensitive). Optional ``cwd_substr`` matches sessions
-    whose ``cwd`` contains the substring (case-insensitive; use this for
-    path-based filtering when you have multiple projects with the same
-    name, e.g. ``--cwd islet`` matches ``/Users/x/IsletIQ`` and
-    ``/Users/x/isletiq-landing``).
+    Filters (all case-insensitive, all optional):
+      ``project``      session's project column equals this exactly
+      ``cwd_substr``   session's cwd contains this substring
+      ``title_substr`` session's title contains this substring (useful when
+                      Claude Code was launched from the home dir so the cwd
+                      is generic but the project name is in the title)
     """
     conn = get_connection()
     try:
@@ -132,6 +133,9 @@ def _collect_sessions(
         if cwd_substr is not None:
             clauses.append("cwd ILIKE %s")
             params.append(f"%{cwd_substr}%")
+        if title_substr is not None:
+            clauses.append("title ILIKE %s")
+            params.append(f"%{title_substr}%")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
         rows = conn.execute(
@@ -242,7 +246,13 @@ def _push_batches(
     "--cwd",
     "cwd_substr",
     default=None,
-    help="Only push sessions whose working directory contains this substring. Useful when you have multiple checkouts of the same project.",
+    help="Only push sessions whose working directory contains this substring (case-insensitive).",
+)
+@click.option(
+    "--title",
+    "title_substr",
+    default=None,
+    help="Only push sessions whose title contains this substring (case-insensitive). Useful when Claude Code was launched from the home dir so all sessions share a generic cwd, but the project name is in the title (e.g. `--title islet`).",
 )
 @click.option(
     "--dry-run",
@@ -254,12 +264,13 @@ def _push_batches(
     is_flag=True,
     help="Share sessions you've already pushed elsewhere. The cloud writes them as fresh rows in this workspace under deterministically rewritten IDs, so the same source session can live in multiple workspaces. Idempotent on repeat.",
 )
-def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, dry_run: bool, copy: bool):
+def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, title_substr: str | None, dry_run: bool, copy: bool):
     """Push local sessions up to Spooling Cloud.
 
     Without filters, this pushes the most recent ``--limit`` sessions from
     every project on this laptop into the workspace your CLI is logged
-    into. Pass ``--project`` or ``--cwd`` to scope which sessions go up.
+    into. Pass ``--project``, ``--cwd``, or ``--title`` to scope which
+    sessions go up. Filters combine with AND.
 
     Two scoping patterns:
 
@@ -272,11 +283,19 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, dr
     2. Copy share — same sessions live in multiple workspaces:
        spool cloud login --key sk_<team-key>
        spool push --cwd toebox --copy
+
+    \b
+    3. When the cwd is generic (e.g. Claude Code launched from ~):
+       spool push --title islet --copy
     """
     headers = _auth_headers()
     base = _api_base()
     sessions = _collect_sessions(
-        limit=limit, since=None, project=project, cwd_substr=cwd_substr,
+        limit=limit,
+        since=None,
+        project=project,
+        cwd_substr=cwd_substr,
+        title_substr=title_substr,
     )
     if not sessions:
         console.print("[yellow]No local sessions match.[/yellow]")
