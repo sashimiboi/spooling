@@ -180,12 +180,24 @@ def _collect_sessions(
         conn.close()
 
 
-def _push_batches(sessions: list[dict], batch: int, base: str, headers: dict, log) -> tuple[int, int, str | None]:
+def _push_batches(
+    sessions: list[dict],
+    batch: int,
+    base: str,
+    headers: dict,
+    log,
+    copy: bool = False,
+) -> tuple[int, int, str | None]:
     """POST sessions to /v1/sessions/batch in chunks.
 
     Returns ``(accepted, rejected, error)``. The cloud rejects sessions
     whose IDs are already owned by another workspace; the CLI surfaces
-    that count so the user can react (delete + re-push, typically).
+    that count so the user can react (use ``--copy`` to share into the
+    new workspace as fresh rows, or ``spool cloud delete`` to free the
+    IDs in the source workspace).
+
+    When ``copy=True`` the server rewrites session IDs deterministically
+    so the same source session can live in multiple workspaces.
     """
     if not sessions:
         return 0, 0, None
@@ -195,7 +207,10 @@ def _push_batches(sessions: list[dict], batch: int, base: str, headers: dict, lo
         for i in range(0, len(sessions), batch):
             chunk = sessions[i:i + batch]
             try:
-                r = client.post(f"{base}/v1/sessions/batch", headers=headers, json={"sessions": chunk})
+                payload: dict = {"sessions": chunk}
+                if copy:
+                    payload["copy"] = True
+                r = client.post(f"{base}/v1/sessions/batch", headers=headers, json=payload)
                 r.raise_for_status()
                 data = r.json()
                 accepted = data.get("accepted", 0)
@@ -232,14 +247,29 @@ def _push_batches(sessions: list[dict], batch: int, base: str, headers: dict, lo
     is_flag=True,
     help="Show which sessions would be pushed and exit. No network call.",
 )
-def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, dry_run: bool):
+@click.option(
+    "--copy",
+    is_flag=True,
+    help="Share sessions you've already pushed elsewhere. The cloud writes them as fresh rows in this workspace under deterministically rewritten IDs, so the same source session can live in multiple workspaces. Idempotent on repeat.",
+)
+def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, dry_run: bool, copy: bool):
     """Push local sessions up to Spooling Cloud.
 
     Without filters, this pushes the most recent ``--limit`` sessions from
     every project on this laptop into the workspace your CLI is logged
     into. Pass ``--project`` or ``--cwd`` to scope which sessions go up.
-    Common pattern: log in with a team-workspace key, push only that
-    project's sessions, leave everything else local.
+
+    Two scoping patterns:
+
+    \b
+    1. Filtered push from one workspace — clean per-workspace separation:
+       spool cloud login --key sk_<team-key>
+       spool push --cwd toebox
+
+    \b
+    2. Copy share — same sessions live in multiple workspaces:
+       spool cloud login --key sk_<team-key>
+       spool push --cwd toebox --copy
     """
     headers = _auth_headers()
     base = _api_base()
@@ -250,14 +280,15 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, dr
         console.print("[yellow]No local sessions match.[/yellow]")
         return
     if dry_run:
-        console.print(f"[dim]Dry run: {len(sessions)} session(s) would push to {base}[/dim]")
+        mode = "copy" if copy else "push"
+        console.print(f"[dim]Dry run ({mode}): {len(sessions)} session(s) would land in {base}[/dim]")
         for s in sessions[:20]:
             title = (s.get("title") or "(untitled)")[:60]
             console.print(f"  [cyan]{s.get('project') or '-'}[/cyan]  {title}")
         if len(sessions) > 20:
             console.print(f"  ... and {len(sessions) - 20} more")
         return
-    total, rejected, err = _push_batches(sessions, batch, base, headers, console.print)
+    total, rejected, err = _push_batches(sessions, batch, base, headers, console.print, copy=copy)
     if err:
         console.print(f"[red]{err}[/red]")
         return
@@ -267,9 +298,9 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, dr
             f"([yellow]{rejected} rejected — IDs already owned by another workspace[/yellow])"
         )
         console.print(
-            "[dim]To move them: log in with a key for the workspace that "
-            "currently owns them, run `spool cloud delete --cwd <substr>`, "
-            "then log back in with the destination workspace's key and `spool push` again.[/dim]"
+            "[dim]To share these sessions into this workspace too, "
+            "re-run with `--copy`. To move them instead (delete from the "
+            "other workspace), see `spool cloud delete --help`.[/dim]"
         )
     else:
         console.print(f"[green]Done.[/green] {total} sessions synced to {base}")
