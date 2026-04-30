@@ -212,7 +212,7 @@ export default function DashboardPage() {
                         <div className="text-sm font-semibold tabular-nums">{formatNumber(p.messages)}</div>
                       </div>
                       <div>
-                        <div className="text-xs text-muted-foreground">Cost</div>
+                        <div className="text-xs text-muted-foreground">Cost (API)</div>
                         <div className="text-sm font-semibold tabular-nums">{formatCost(p.cost || 0)}</div>
                       </div>
                     </div>

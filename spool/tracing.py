@@ -337,7 +337,6 @@ def build_flat_trace_from_messages(
     cwd: Optional[str] = None,
     git_branch: Optional[str] = None,
     model: Optional[str] = None,
-    pricing: tuple[float, float] = (3.0, 15.0),
 ) -> Trace:
     """Build a flat Trace from a provider's ParsedMessage list.
 
@@ -346,7 +345,13 @@ def build_flat_trace_from_messages(
     one tool span per tool name mentioned in that turn. The session span is
     the root; there are no agent spans because these providers don't expose
     subagent boundaries.
+
+    Cost per turn is computed via ``spool.pricing.get_rates(model)`` so
+    Gemini Code Assist and other non-Claude providers get real per-model
+    rates instead of falling through to a hardcoded Sonnet default.
     """
+    from spool.pricing import get_rates
+    rates = get_rates(model)
     tb = TraceBuilder(
         provider_id=provider_id,
         session_id=session_id,
@@ -363,15 +368,13 @@ def build_flat_trace_from_messages(
         started_at=first_ts,
     )
 
-    in_rate, out_rate = pricing
-
     for m in messages:
         ts = m.timestamp
         if m.role == "assistant":
             # Estimated-token-based cost (no real usage for these providers).
             est_in = 0  # handled on user msgs
             est_out = getattr(m, "estimated_tokens", 0) or 0
-            cost = round((est_out * out_rate) / 1_000_000, 6)
+            cost = rates.cost(input_tokens=est_in, output_tokens=est_out)
 
             llm_span = tb.start_llm_call(
                 parent=root,

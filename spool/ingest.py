@@ -222,6 +222,34 @@ def _store_trace(conn, trace: Trace):
                 (span.id, trace.id, ev.name, ev.timestamp, json.dumps(ev.attrs or {})),
             )
 
+    # After spans land, sync the session's headline cost to the sum of its
+    # llm_call span costs. Span cost is computed from real per-turn usage
+    # (input/output/cache tokens) priced via the LiteLLM rate table, and is
+    # the right number for "what would this workload cost on the API at list
+    # price." Only override when we actually have real LLM call cost data;
+    # providers without trace-level usage (Gemini Code Assist webview,
+    # Kiro, etc., where llm_call costs come from message-char estimates)
+    # still benefit, but sessions with zero llm_call cost keep their
+    # existing chars/4 estimate untouched.
+    if trace.session_id:
+        conn.execute(
+            """UPDATE sessions ss
+               SET estimated_cost_usd = sub.span_cost
+               FROM (
+                 SELECT t.session_id, SUM(s.cost_usd)::numeric(10, 4) AS span_cost
+                 FROM spans s JOIN traces t ON s.trace_id = t.id
+                 WHERE t.session_id = %s
+                   AND s.kind = 'llm_call'
+                   AND s.cost_usd IS NOT NULL
+                   AND s.cost_usd > 0
+                   AND s.model IS NOT NULL
+                   AND s.model <> '<synthetic>'
+                 GROUP BY t.session_id
+               ) sub
+               WHERE ss.id = sub.session_id AND sub.span_cost > 0""",
+            (trace.session_id,),
+        )
+
 
 def _embed_session(conn, session: ParsedSession):
     """Chunk and embed session messages into pgvector."""
