@@ -8,6 +8,7 @@ from spool.providers.copilot import CopilotProvider
 from spool.providers.windsurf import WindsurfProvider
 from spool.providers.kiro import KiroProvider
 from spool.providers.antigravity import AntigravityProvider
+from spool.providers.gemini import GeminiProvider
 
 __all__ = [
     "Provider",
@@ -19,6 +20,7 @@ __all__ = [
     "WindsurfProvider",
     "KiroProvider",
     "AntigravityProvider",
+    "GeminiProvider",
 ]
 
 

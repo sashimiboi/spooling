@@ -134,6 +134,13 @@ PROVIDER_TEMPLATES = {
         "description": "Google's Antigravity agent IDE. Tracks chat and agent sessions from SQLite (VS Code fork layout).",
         "status_hint": "Auto-detected from Antigravity Application Support.",
     },
+    "gemini": {
+        "name": "Gemini Code Assist",
+        "icon": "gemini",
+        "default_path": "~/Library/Application Support/Code/User/workspaceStorage",
+        "description": "Google's Gemini Code Assist VS Code extension and Gemini CLI. Reads chat from extension storage and ~/.gemini/.",
+        "status_hint": "Auto-detected from VS Code extension storage and ~/.gemini/.",
+    },
 }
 
 

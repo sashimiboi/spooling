@@ -15,6 +15,7 @@ export const PROVIDER_COLORS: Record<string, string> = {
   windsurf: '#ec4899',
   kiro: '#a855f7',
   antigravity: '#ef4444',
+  gemini: '#4285f4',
 };
 
 // One-hue categorical palette: violet hero, then desaturated steps so the

@@ -68,6 +68,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   'windsurf': 'Windsurf',
   'kiro': 'Kiro',
   'antigravity': 'Antigravity',
+  'gemini': 'Gemini Code Assist',
 };
 
 const DATE_RANGES: Array<{ key: DateRange; label: string; ms: number | null }> = [
