@@ -26,8 +26,19 @@ console = Console()
 
 
 def _estimate_cost(input_tokens: int, output_tokens: int, model: str | None) -> float:
-    pricing = MODEL_PRICING.get(model or "", DEFAULT_PRICING)
-    return round((input_tokens * pricing[0] + output_tokens * pricing[1]) / 1_000_000, 6)
+    """Session-level cost using the LiteLLM-backed rate table.
+
+    Routes through ``spool.pricing.get_rates`` so non-Claude providers
+    (Gemini, GPT, etc.) get real per-model rates instead of falling
+    through the Claude-only static dict to the Sonnet default. The
+    pricing module handles the fallback chain (LiteLLM cache ->
+    static MODEL_PRICING -> DEFAULT_PRICING) and Gemini Code Assist
+    naming normalization (chat-gemini-3-0-flash-preview-free-tier ->
+    gemini-3-flash-preview).
+    """
+    from spool.pricing import get_rates
+    rates = get_rates(model)
+    return rates.cost(input_tokens=input_tokens, output_tokens=output_tokens)
 
 
 def _get_synced_files(conn) -> dict[str, int]:
@@ -65,6 +76,7 @@ def _store_session(conn, session: ParsedSession):
            estimated_output_tokens = EXCLUDED.estimated_output_tokens,
            estimated_cost_usd = EXCLUDED.estimated_cost_usd,
            ended_at = EXCLUDED.ended_at,
+           model = EXCLUDED.model,
            title = EXCLUDED.title""",
         (
             session.session_id, session.provider_id, _scrub(session.project), _scrub(session.cwd),

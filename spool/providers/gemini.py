@@ -218,7 +218,11 @@ def _build_session_from_thread(thread_id: str, thread: dict) -> ParsedSession | 
         if not isinstance(content, str) or not content.strip():
             continue
         if model is None:
-            model = item.get("modelDisplayName") or item.get("modelID")
+            # Prefer canonical modelID over human display name. modelID like
+            # "chat-gemini-3-0-flash-preview-free-tier" resolves to a real
+            # LiteLLM key via pricing._candidate_keys; "3 Flash Preview"
+            # does not.
+            model = item.get("modelID") or item.get("modelDisplayName")
         messages.append(ParsedMessage(
             uuid=item.get("chatSectionId") or f"{sid}-{i}",
             session_id=sid,

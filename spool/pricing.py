@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.request
 import urllib.error
@@ -33,6 +34,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from spool.config import MODEL_PRICING, DEFAULT_PRICING
+
+# "chat-gemini-3-0-flash-preview-free-tier" -> "gemini-3-flash-preview".
+# Gemini Code Assist reports modelID with a "chat-" prefix, a tier suffix
+# ("-free-tier" / "-paid-tier"), and an extra ".0" minor version segment
+# that LiteLLM's keys don't carry. Normalizing all three lands us on a
+# real LiteLLM key.
+_GEMINI_CHAT_PREFIX = re.compile(r"^chat-")
+_GEMINI_TIER_SUFFIX = re.compile(r"-(?:free|paid)-tier$")
+_GEMINI_ZERO_MINOR = re.compile(r"^(gemini-\d+)-0(-)")
 
 PRICING_URL = (
     "https://raw.githubusercontent.com/BerriAI/litellm/main/"
@@ -163,6 +173,14 @@ def _candidate_keys(model: str) -> list[str]:
     if parts and parts[-1].isdigit() and len(parts[-1]) == 8:
         variants.append("-".join(parts[:-1]))
         variants.append(f"anthropic/{'-'.join(parts[:-1])}")
+
+    # Gemini Code Assist normalization: chat-gemini-3-0-flash-preview-free-tier
+    # -> gemini-3-flash-preview, plus its gemini/ and vertex_ai/ variants.
+    g = _GEMINI_CHAT_PREFIX.sub("", m)
+    g = _GEMINI_TIER_SUFFIX.sub("", g)
+    g = _GEMINI_ZERO_MINOR.sub(r"\1\2", g)
+    if g != m:
+        variants.extend([g, f"gemini/{g}", f"vertex_ai/{g}"])
     # De-dupe while preserving order.
     seen: set[str] = set()
     out: list[str] = []

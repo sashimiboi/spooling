@@ -141,7 +141,8 @@ def _collect_sessions(
         rows = conn.execute(
             f"""SELECT id, provider_id, project, title, cwd, started_at, ended_at,
                        message_count, tool_call_count,
-                       estimated_input_tokens, estimated_output_tokens, estimated_cost_usd
+                       estimated_input_tokens, estimated_output_tokens, estimated_cost_usd,
+                       model
                 FROM sessions
                 {where}
                 ORDER BY started_at DESC NULLS LAST
@@ -171,6 +172,7 @@ def _collect_sessions(
                 "input_tokens": r["estimated_input_tokens"] or 0,
                 "output_tokens": r["estimated_output_tokens"] or 0,
                 "estimated_cost_usd": float(r["estimated_cost_usd"] or 0),
+                "model": r["model"],
                 "messages": [
                     {
                         "role": m["role"],
