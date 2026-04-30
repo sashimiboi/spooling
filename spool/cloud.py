@@ -403,6 +403,12 @@ def cloud_watch(interval: int, limit: int, batch: int, lookback: int):
     help="Delete cloud sessions whose working directory contains this substring.",
 )
 @click.option(
+    "--session-id",
+    "session_id",
+    default=None,
+    help="Delete a single cloud session by its id. Use when project/cwd filters can't isolate it (e.g. seed data with project=null).",
+)
+@click.option(
     "--all",
     "delete_all",
     is_flag=True,
@@ -418,7 +424,7 @@ def cloud_watch(interval: int, limit: int, batch: int, lookback: int):
     is_flag=True,
     help="Skip the confirmation prompt. Required with --all.",
 )
-def cloud_delete(project: str | None, cwd_substr: str | None, delete_all: bool, dry_run: bool, yes: bool):
+def cloud_delete(project: str | None, cwd_substr: str | None, session_id: str | None, delete_all: bool, dry_run: bool, yes: bool):
     """Delete cloud sessions in the workspace this key authenticates to.
 
     Use this when a session ID is owned by the wrong workspace (typically
@@ -428,8 +434,8 @@ def cloud_delete(project: str | None, cwd_substr: str | None, delete_all: bool, 
 
     Filters scope what gets deleted. Without filters, --all is required.
     """
-    if not (project or cwd_substr or delete_all):
-        console.print("[red]Pass --project, --cwd, or --all.[/red]")
+    if not (project or cwd_substr or session_id or delete_all):
+        console.print("[red]Pass --project, --cwd, --session-id, or --all.[/red]")
         return
     if delete_all and not yes:
         console.print("[red]--all is destructive. Re-run with --yes to confirm.[/red]")
@@ -442,6 +448,8 @@ def cloud_delete(project: str | None, cwd_substr: str | None, delete_all: bool, 
         params["project"] = project
     if cwd_substr:
         params["cwd_substr"] = cwd_substr
+    if session_id:
+        params["id"] = session_id
 
     try:
         with httpx.Client(timeout=60) as client:
