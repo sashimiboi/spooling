@@ -114,7 +114,13 @@ export default function DashboardPage() {
     { label: 'Messages', value: s.total_messages, icon: MessageSquare },
     { label: 'Tool Calls', value: s.total_tool_calls, icon: Wrench },
     { label: 'Est. Tokens', value: totalTokens, icon: Hash },
-    { label: 'Est. Cost', value: formatCost(s.total_cost_usd || 0), icon: Coins, raw: true },
+    {
+      label: 'Est. Cost',
+      value: formatCost(s.total_cost_usd || 0),
+      icon: Coins,
+      raw: true,
+      hint: "Estimate based on per-token API rates for each session's model. Actual spend depends on your subscription plan (Claude Max, Cursor Pro, Copilot Pro, etc.) and may differ.",
+    },
     { label: 'Projects', value: overview.projects.length, icon: FolderOpen },
   ];
 
@@ -151,11 +157,20 @@ export default function DashboardPage() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {statCards.map((card) => {
           const Icon = card.icon;
+          const hint = (card as { hint?: string }).hint;
           return (
-            <Card key={card.label}>
+            <Card
+              key={card.label}
+              title={hint}
+              aria-label={hint ? `${card.label}. ${hint}` : undefined}
+              className={hint ? "cursor-help" : undefined}
+            >
               <CardContent className="pt-3 pb-3 px-3">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{card.label}</span>
+                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                    {card.label}
+                    {hint && <span aria-hidden className="text-[9px] opacity-60">ⓘ</span>}
+                  </span>
                   <Icon className="h-3.5 w-3.5 text-muted-foreground" />
                 </div>
                 <div className="text-xl font-semibold">
@@ -166,9 +181,6 @@ export default function DashboardPage() {
           );
         })}
       </div>
-      <p className="text-[11px] text-muted-foreground -mt-2 mb-2">
-        Cost is an estimate based on per-token API rates for each session&apos;s model. Actual spend depends on your subscription plan (Claude Max, Cursor Pro, Copilot Pro, etc.) and may differ.
-      </p>
 
       {/* Daily activity chart */}
       {daily.length > 0 && (
