@@ -156,6 +156,19 @@ PROVIDER_TEMPLATES = {
             {"key": "scope", "label": "MR scope", "default": "assigned_to_me", "options": ["assigned_to_me", "created_by_me", "all"]},
         ],
     },
+    "github": {
+        "name": "GitHub",
+        "icon": "github",
+        "default_path": "https://api.github.com",
+        "description": "GitHub pull request and issue threads. One PR/issue = one session, with the body + every comment + every PR review (and review comments) as messages. Requires a personal access token with `repo` scope (or `public_repo` for public-only).",
+        "status_hint": "Connect with an API URL + personal access token.",
+        "remote": True,
+        "credentials": [
+            {"key": "api_url", "label": "API URL", "default": "https://api.github.com", "placeholder": "https://api.github.com"},
+            {"key": "token", "label": "Personal access token", "secret": True, "placeholder": "ghp_... or github_pat_..."},
+            {"key": "scope", "label": "PR/issue scope", "default": "involves", "options": ["involves", "author", "assignee"]},
+        ],
+    },
 }
 
 
