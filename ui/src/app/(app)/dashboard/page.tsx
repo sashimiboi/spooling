@@ -166,6 +166,9 @@ export default function DashboardPage() {
           );
         })}
       </div>
+      <p className="text-[11px] text-muted-foreground -mt-2 mb-2">
+        Cost is an estimate based on per-token API rates for each session&apos;s model. Actual spend depends on your subscription plan (Claude Max, Cursor Pro, Copilot Pro, etc.) and may differ.
+      </p>
 
       {/* Daily activity chart */}
       {daily.length > 0 && (
@@ -212,7 +215,7 @@ export default function DashboardPage() {
                         <div className="text-sm font-semibold tabular-nums">{formatNumber(p.messages)}</div>
                       </div>
                       <div>
-                        <div className="text-xs text-muted-foreground">Cost (API)</div>
+                        <div className="text-xs text-muted-foreground">Cost (est)</div>
                         <div className="text-sm font-semibold tabular-nums">{formatCost(p.cost || 0)}</div>
                       </div>
                     </div>

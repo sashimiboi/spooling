@@ -327,7 +327,7 @@ export default function TracesPage() {
                               <div>{selectedSpan.model || '—'}</div>
                             </div>
                             <div>
-                              <div className="text-muted-foreground text-[11px]">Cost (API)</div>
+                              <div className="text-muted-foreground text-[11px]">Cost (est)</div>
                               <div className="tabular-nums">{formatCost(Number(selectedSpan.cost_usd) || 0)}</div>
                             </div>
                           </>
