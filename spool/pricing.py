@@ -180,6 +180,31 @@ def _get_table() -> dict:
         return _table
 
 
+_BEDROCK_RE = re.compile(
+    r"^(?:(?P<region>[a-z]{2,6})\.)?"
+    r"(?P<vendor>anthropic|amazon|meta|cohere|mistral|ai21|stability|deepseek)\."
+    r"(?P<rest>.+)$"
+)
+_BEDROCK_VERSION_SUFFIX = re.compile(r"-v\d+(?::\d+)?$")
+
+
+def _bedrock_parts(model: str) -> tuple[str, str, str, str] | None:
+    """Decompose a Bedrock-style model id into (region, vendor, rest, stem).
+
+    ``us.anthropic.claude-sonnet-4-5-20250929-v1:0``
+        -> ("us", "anthropic", "claude-sonnet-4-5-20250929-v1:0", "claude-sonnet-4-5-20250929").
+    ``eu.mistral.mistral-large-2407-v1:0``
+        -> ("eu", "mistral",   "mistral-large-2407-v1:0",         "mistral-large-2407").
+    Returns None for non-Bedrock-shaped strings.
+    """
+    match = _BEDROCK_RE.match(model)
+    if not match:
+        return None
+    rest = match.group("rest")
+    stem = _BEDROCK_VERSION_SUFFIX.sub("", rest)
+    return match.group("region") or "", match.group("vendor"), rest, stem
+
+
 def _candidate_keys(model: str) -> list[str]:
     """Candidate LiteLLM keys to try for a given Spool model name.
 
@@ -197,6 +222,23 @@ def _candidate_keys(model: str) -> list[str]:
         f"anthropic/{m}",
         m.split("/", 1)[-1] if "/" in m else m,
     ]
+
+    # Bedrock model ids: try the LiteLLM bedrock/ prefix forms, the
+    # region-stripped form (cross-region inference profiles bill the
+    # same as the global model), and recurse the extracted stem so the
+    # date-strip and Claude version-walk below kick in for new models.
+    bedrock = _bedrock_parts(m)
+    if bedrock is not None:
+        region, vendor, rest, stem = bedrock
+        variants.append(f"bedrock/{m}")
+        if region:
+            stripped = f"{vendor}.{rest}"  # keep -vN:M; non-Anthropic LiteLLM keys carry it
+            variants.append(stripped)
+            variants.append(f"bedrock/{stripped}")
+        if vendor == "anthropic":
+            variants.append(stem)
+            m = stem  # re-run subsequent generic + Claude logic on the stem
+
     # Strip trailing date suffix: claude-sonnet-4-20250514 -> claude-sonnet-4
     parts = m.split("-")
     if parts and parts[-1].isdigit() and len(parts[-1]) == 8:
