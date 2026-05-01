@@ -44,6 +44,35 @@ _GEMINI_CHAT_PREFIX = re.compile(r"^chat-")
 _GEMINI_TIER_SUFFIX = re.compile(r"-(?:free|paid)-tier$")
 _GEMINI_ZERO_MINOR = re.compile(r"^(gemini-\d+)-0(-)")
 
+# When a parser can't extract a model (or stores a placeholder like Kiro's
+# "auto"), substitute the provider's documented default before pricing.
+# Source: each provider's docs, picked as the most-common-actual-model.
+PROVIDER_DEFAULT_MODEL: dict[str, str] = {
+    "claude-code":   "claude-sonnet-4-6",
+    "copilot":       "gpt-4o",
+    "cursor":        "claude-sonnet-4-6",
+    "windsurf":      "claude-sonnet-4-6",
+    "kiro":          "claude-sonnet-4-6",
+    "antigravity":   "gemini-3-pro-preview",
+    "codex":         "gpt-5",
+    "gemini":        "gemini-2.5-flash",
+}
+
+_UNKNOWN_MODEL_SENTINELS = {"", "auto", "default", "<synthetic>"}
+
+
+def normalize_model(model: str | None, provider_id: str | None = None) -> str | None:
+    """Coerce parser-side model strings into something pricing can resolve.
+
+    Empty, ``auto``, ``default``, ``<synthetic>``: substitute the provider's
+    default model. Otherwise return the model unchanged.
+    """
+    if model and model.strip() and model.strip().lower() not in _UNKNOWN_MODEL_SENTINELS:
+        return model
+    if provider_id and provider_id in PROVIDER_DEFAULT_MODEL:
+        return PROVIDER_DEFAULT_MODEL[provider_id]
+    return model
+
 PRICING_URL = (
     "https://raw.githubusercontent.com/BerriAI/litellm/main/"
     "model_prices_and_context_window.json"
@@ -181,6 +210,16 @@ def _candidate_keys(model: str) -> list[str]:
     g = _GEMINI_ZERO_MINOR.sub(r"\1\2", g)
     if g != m:
         variants.extend([g, f"gemini/{g}", f"vertex_ai/{g}"])
+
+    # Claude version-walk: when a fresh release like claude-opus-4-7 or
+    # claude-sonnet-4-7 hasn't landed in LiteLLM yet, fall back to the
+    # immediate prior version (rates are essentially always the same on
+    # incremental Anthropic releases). Walks down to -4-1.
+    cm = re.match(r"^(claude-(?:opus|sonnet|haiku)-\d+)-(\d+)$", m)
+    if cm:
+        family, minor = cm.group(1), int(cm.group(2))
+        for prev in range(minor - 1, 0, -1):
+            variants.append(f"{family}-{prev}")
     # De-dupe while preserving order.
     seen: set[str] = set()
     out: list[str] = []
@@ -191,14 +230,16 @@ def _candidate_keys(model: str) -> list[str]:
     return out
 
 
-def get_rates(model: str | None) -> ModelRates:
+def get_rates(model: str | None, provider_id: str | None = None) -> ModelRates:
     """Return per-token USD rates for a model, falling back to DEFAULT_PRICING.
 
     Resolution order:
-    1. LiteLLM table (fetched/cached from GitHub)
-    2. Hard-coded MODEL_PRICING in spool.config (input/output only, no cache info)
-    3. DEFAULT_PRICING (Sonnet-ish rates)
+    1. ``normalize_model`` swaps null/auto/synthetic for the provider default
+    2. LiteLLM table (fetched/cached from GitHub)
+    3. Hard-coded MODEL_PRICING in spool.config (input/output only)
+    4. DEFAULT_PRICING (Sonnet-ish rates)
     """
+    model = normalize_model(model, provider_id)
     table = _get_table()
     for key in _candidate_keys(model or ""):
         entry = table.get(key)

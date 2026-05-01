@@ -351,7 +351,7 @@ def build_flat_trace_from_messages(
     rates instead of falling through to a hardcoded Sonnet default.
     """
     from spool.pricing import get_rates
-    rates = get_rates(model)
+    rates = get_rates(model, provider_id=provider_id)
     tb = TraceBuilder(
         provider_id=provider_id,
         session_id=session_id,

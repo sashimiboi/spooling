@@ -25,19 +25,23 @@ def _scrub(s):
 console = Console()
 
 
-def _estimate_cost(input_tokens: int, output_tokens: int, model: str | None) -> float:
+def _estimate_cost(
+    input_tokens: int,
+    output_tokens: int,
+    model: str | None,
+    provider_id: str | None = None,
+) -> float:
     """Session-level cost using the LiteLLM-backed rate table.
 
     Routes through ``spool.pricing.get_rates`` so non-Claude providers
     (Gemini, GPT, etc.) get real per-model rates instead of falling
-    through the Claude-only static dict to the Sonnet default. The
-    pricing module handles the fallback chain (LiteLLM cache ->
-    static MODEL_PRICING -> DEFAULT_PRICING) and Gemini Code Assist
-    naming normalization (chat-gemini-3-0-flash-preview-free-tier ->
-    gemini-3-flash-preview).
+    through the Claude-only static dict to the Sonnet default. Passing
+    ``provider_id`` lets the pricing layer substitute that provider's
+    default model when the parser couldn't capture one (e.g. Kiro's
+    ``auto``, or Copilot sessions that don't expose the model).
     """
     from spool.pricing import get_rates
-    rates = get_rates(model)
+    rates = get_rates(model, provider_id=provider_id)
     return rates.cost(input_tokens=input_tokens, output_tokens=output_tokens)
 
 
@@ -61,6 +65,7 @@ def _store_session(conn, session: ParsedSession):
         session.estimated_input_tokens,
         session.estimated_output_tokens,
         session.model,
+        provider_id=session.provider_id,
     )
 
     conn.execute(
