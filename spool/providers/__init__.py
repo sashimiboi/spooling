@@ -1,6 +1,6 @@
 """Multi-provider support for Spool."""
 
-from spool.providers.base import Provider, PROVIDER_REGISTRY
+from spool.providers.base import Provider, RemoteProvider, PROVIDER_REGISTRY
 from spool.providers.claude_code import ClaudeCodeProvider
 from spool.providers.codex import CodexProvider
 from spool.providers.cursor import CursorProvider
@@ -9,9 +9,11 @@ from spool.providers.windsurf import WindsurfProvider
 from spool.providers.kiro import KiroProvider
 from spool.providers.antigravity import AntigravityProvider
 from spool.providers.gemini import GeminiProvider
+from spool.providers.gitlab import GitLabProvider
 
 __all__ = [
     "Provider",
+    "RemoteProvider",
     "PROVIDER_REGISTRY",
     "ClaudeCodeProvider",
     "CodexProvider",
@@ -21,6 +23,7 @@ __all__ = [
     "KiroProvider",
     "AntigravityProvider",
     "GeminiProvider",
+    "GitLabProvider",
 ]
 
 

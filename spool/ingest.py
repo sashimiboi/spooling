@@ -301,9 +301,47 @@ def _embed_session(conn, session: ParsedSession):
 def _get_connected_providers(conn) -> list[dict]:
     """Get all connected providers from the database."""
     rows = conn.execute(
-        "SELECT id, type, data_path FROM providers WHERE status = 'connected' AND type != 'agent'"
+        "SELECT id, type, data_path, config FROM providers WHERE status = 'connected' AND type != 'agent'"
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def _sync_remote_provider(conn, provider, prov_info: dict, embed: bool) -> tuple[int, int, int]:
+    """Sync one remote provider via iter_sessions; persist cursor back to config."""
+    config = prov_info.get("config") or {}
+    if isinstance(config, str):
+        config = json.loads(config)
+    state = config.get("sync_state") or {}
+
+    total_sessions = 0
+    total_messages = 0
+    total_chunks = 0
+    last_marker = None
+
+    try:
+        for session, marker in provider.iter_sessions(config=config, state=state):
+            _store_session(conn, session)
+            if session.trace is not None:
+                _store_trace(conn, session.trace)
+            total_messages += session.message_count
+            total_sessions += 1
+            if embed:
+                total_chunks += _embed_session(conn, session)
+            last_marker = marker
+            # Advance the cursor opportunistically so a crash mid-sync
+            # still makes progress on the next run.
+            if marker.get("kind") == "remote" and marker.get("cursor"):
+                state["updated_after"] = marker["cursor"]
+                config["sync_state"] = state
+                conn.execute(
+                    "UPDATE providers SET config = %s WHERE id = %s",
+                    (json.dumps(config), prov_info["id"]),
+                )
+                conn.commit()
+    except Exception as e:
+        console.print(f"[red]Remote sync failed for {provider.name}: {e}[/red]")
+
+    return total_sessions, total_messages, total_chunks
 
 
 def sync(embed: bool = True, provider_filter: str | None = None):
@@ -346,6 +384,29 @@ def sync(embed: bool = True, provider_filter: str | None = None):
         provider = get_provider(prov_info["type"])
         if not provider:
             console.print(f"[yellow]Unknown provider type: {prov_info['type']}[/yellow]")
+            continue
+
+        # Remote providers (GitLab, etc.) don't have files on disk —
+        # delegate to iter_sessions and persist the cursor cleanly.
+        if provider.is_remote:
+            console.print(f"[bold]{provider.name}:[/bold] Fetching from API...")
+            ns, nm, nc = _sync_remote_provider(conn, provider, prov_info, embed)
+            if ns:
+                console.print(
+                    f"  [green]Synced {ns} sessions, {nm} messages, "
+                    f"{nc} chunks embedded.[/green]"
+                )
+                conn.execute(
+                    """UPDATE providers SET
+                       session_count = (SELECT COUNT(*) FROM sessions WHERE provider_id = %s),
+                       last_synced_at = now()
+                       WHERE id = %s""",
+                    (prov_info["id"], prov_info["id"]),
+                )
+                conn.commit()
+            grand_total_sessions += ns
+            grand_total_messages += nm
+            grand_total_chunks += nc
             continue
 
         # Use custom data_path if set, otherwise default

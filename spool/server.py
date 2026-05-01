@@ -1,5 +1,7 @@
 """FastAPI server for Spool API."""
 
+import json
+
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -141,6 +143,19 @@ PROVIDER_TEMPLATES = {
         "description": "Google's Gemini Code Assist VS Code extension and Gemini CLI. Reads chat from extension storage and ~/.gemini/.",
         "status_hint": "Auto-detected from VS Code extension storage and ~/.gemini/.",
     },
+    "gitlab": {
+        "name": "GitLab",
+        "icon": "gitlab",
+        "default_path": "https://gitlab.com",
+        "description": "GitLab merge request threads. One MR = one session, with the description + every note (review comment, system event) as a message. Requires a personal access token with `read_api` scope.",
+        "status_hint": "Connect with a GitLab URL + personal access token.",
+        "remote": True,
+        "credentials": [
+            {"key": "gitlab_url", "label": "GitLab URL", "default": "https://gitlab.com", "placeholder": "https://gitlab.com"},
+            {"key": "token", "label": "Personal access token", "secret": True, "placeholder": "glpat-..."},
+            {"key": "scope", "label": "MR scope", "default": "assigned_to_me", "options": ["assigned_to_me", "created_by_me", "all"]},
+        ],
+    },
 }
 
 
@@ -190,6 +205,8 @@ async def api_available_providers():
             "connected": type_id in existing_types,
             "detected": detected,
             "file_count": file_count,
+            "remote": bool(tmpl.get("remote")),
+            "credentials": tmpl.get("credentials", []),
         })
     return available
 
@@ -197,6 +214,7 @@ async def api_available_providers():
 class ProviderCreate(BaseModel):
     type: str
     data_path: str | None = None
+    config: dict | None = None
 
 
 @app.post("/api/providers")
@@ -208,13 +226,14 @@ async def api_create_provider(body: ProviderCreate):
 
     provider_id = body.type
     data_path = body.data_path or tmpl["default_path"]
+    config_json = json.dumps(body.config or {})
 
     conn = get_connection()
     conn.execute(
-        """INSERT INTO providers (id, name, type, data_path, icon, status)
-           VALUES (%s, %s, %s, %s, %s, 'connected')
-           ON CONFLICT (id) DO UPDATE SET data_path = %s, status = 'connected'""",
-        (provider_id, tmpl["name"], body.type, data_path, tmpl["icon"], data_path),
+        """INSERT INTO providers (id, name, type, data_path, icon, config, status)
+           VALUES (%s, %s, %s, %s, %s, %s, 'connected')
+           ON CONFLICT (id) DO UPDATE SET data_path = %s, config = %s, status = 'connected'""",
+        (provider_id, tmpl["name"], body.type, data_path, tmpl["icon"], config_json, data_path, config_json),
     )
     conn.commit()
     conn.close()
