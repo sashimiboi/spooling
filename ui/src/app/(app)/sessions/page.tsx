@@ -718,6 +718,7 @@ export default function SessionsPage() {
 
   const columnDefs = useMemo<ColDef<Session>[]>(() => [
     { field: 'title', headerName: 'Session', sortable: true, filter: 'agTextColumnFilter', flex: 2, minWidth: 240, valueFormatter: (p) => (p.value || 'Untitled').slice(0, 80), tooltipValueGetter: (p) => p.value || 'Untitled' },
+    { field: 'id', headerName: 'Session ID', sortable: true, filter: 'agTextColumnFilter', flex: 1, minWidth: 130, cellClass: 'font-mono', tooltipValueGetter: (p) => p.value },
     { field: 'provider_id', headerName: 'Provider', sortable: true, filter: 'agTextColumnFilter', flex: 1, minWidth: 110, valueFormatter: (p) => PROVIDER_LABELS[p.value as string] || p.value },
     { field: 'project', headerName: 'Project', sortable: true, filter: 'agTextColumnFilter', flex: 1.3, minWidth: 140, valueFormatter: (p) => cleanProject(p.value || '') },
     { field: 'git_branch', headerName: 'Branch', sortable: true, filter: 'agTextColumnFilter', flex: 1, minWidth: 110, valueFormatter: (p) => p.value || '—' },
