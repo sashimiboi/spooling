@@ -9,7 +9,7 @@ import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry as GridModuleRegistry, AllCommunityModule as GridAllCommunityModule, type ColDef } from 'ag-grid-community';
 import { useTheme } from '@/components/ThemeProvider';
 import { getGridTheme } from '@/lib/agGridTheme';
-import { fetchApi, formatNumber, formatCost, cleanProject } from '@/lib/api';
+import { fetchApi, formatNumber, cleanProject } from '@/lib/api';
 import ActivityChart from '@/components/ActivityChart';
 import {
   baseChartOptions,
@@ -108,10 +108,6 @@ export default function AnalyticsPage() {
       field: 'total_tokens', headerName: 'Tokens', sortable: true, filter: 'agNumberColumnFilter', type: 'rightAligned', flex: 1, minWidth: 100,
       valueFormatter: (p: any) => formatNumber(p.value || 0),
     },
-    {
-      field: 'cost', headerName: 'Cost', sortable: true, filter: 'agNumberColumnFilter', type: 'rightAligned', flex: 1, minWidth: 80,
-      valueFormatter: (p: any) => formatCost(p.value || 0),
-    },
   ], []);
 
   // --- ag-grid: Provider Breakdown ---
@@ -141,10 +137,6 @@ export default function AnalyticsPage() {
         headerName: 'Tokens', sortable: true, filter: 'agNumberColumnFilter', type: 'rightAligned', flex: 1, minWidth: 100,
         valueGetter: (p: any) => (p.data?.input_tokens || 0) + (p.data?.output_tokens || 0),
         valueFormatter: (p: any) => formatNumber(p.value || 0),
-      },
-      {
-        field: 'cost', headerName: 'Cost', sortable: true, filter: 'agNumberColumnFilter', type: 'rightAligned', flex: 1, minWidth: 80,
-        valueFormatter: (p: any) => formatCost(p.value || 0),
       },
       {
         headerName: 'Share', sortable: true, type: 'rightAligned', flex: 1, minWidth: 80,
@@ -344,7 +336,6 @@ export default function AnalyticsPage() {
           { label: 'Sessions', value: formatNumber(s.total_sessions || 0) },
           { label: 'Messages', value: formatNumber(s.total_messages || 0) },
           { label: 'Tokens', value: formatNumber((s.total_input_tokens || 0) + (s.total_output_tokens || 0)) },
-          { label: 'Cost', value: formatCost(s.total_cost_usd || 0) },
         ].map(c => (
           <Card key={c.label}>
             <CardContent className="pt-3 pb-3 px-3">

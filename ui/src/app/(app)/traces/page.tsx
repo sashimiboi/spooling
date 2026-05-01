@@ -10,7 +10,7 @@ import { ArrowLeft, Activity, Bot, Wrench, Sparkles, AlertCircle, Play, CheckCir
 import { cn } from '@/lib/utils';
 import SpanTree, { Span, SpanBadges, VENDOR_COLORS } from '@/components/SpanTree';
 import TraceConversation from '@/components/TraceConversation';
-import { fetchApi, postApi, formatCost, formatDate, cleanProject } from '@/lib/api';
+import { fetchApi, postApi, formatDate, cleanProject } from '@/lib/api';
 
 interface TraceListRow {
   id: string;
@@ -260,7 +260,6 @@ export default function TracesPage() {
               <div className="font-medium">{val}</div>
             </div>
           ))}
-          <CostCell trace={t} />
         </div>
 
         <Tabs defaultValue="conversation">
@@ -325,10 +324,6 @@ export default function TracesPage() {
                             <div>
                               <div className="text-muted-foreground text-[11px]">Model</div>
                               <div>{selectedSpan.model || '—'}</div>
-                            </div>
-                            <div>
-                              <div className="text-muted-foreground text-[11px]">Cost (est)</div>
-                              <div className="tabular-nums">{formatCost(Number(selectedSpan.cost_usd) || 0)}</div>
                             </div>
                           </>
                         )}
@@ -655,56 +650,3 @@ function formatTokens(n: number): string {
   return n.toLocaleString();
 }
 
-function CostCell({ trace }: { trace: TraceDetail['trace'] }) {
-  const total = Number(trace.total_cost_usd) || 0;
-  const b = trace.cost_breakdown;
-  return (
-    <div className="relative group">
-      <div className="text-[11px] text-muted-foreground mb-0.5 flex items-center gap-1">
-        Cost
-        <span className="text-[9px] uppercase tracking-wider text-muted-foreground/70 cursor-help">
-          API equiv
-        </span>
-      </div>
-      <div className="font-medium">{formatCost(total)}</div>
-
-      {b && (
-        <div
-          role="tooltip"
-          className="absolute left-0 top-full mt-2 z-20 w-80 rounded-lg border border-border bg-popover shadow-xl p-3 pointer-events-none opacity-0 group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-150"
-        >
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-            Cost breakdown {b.model && <span className="text-[10px] normal-case font-mono text-muted-foreground/80">· {b.model}</span>}
-          </div>
-          <table className="w-full text-[12px] tabular-nums">
-            <tbody>
-              <CostRow label="Input" tokens={b.input_tokens} cost={b.input} />
-              <CostRow label="Output" tokens={b.output_tokens} cost={b.output} />
-              <CostRow label="Cache read" tokens={b.cache_read_tokens} cost={b.cache_read} />
-              <CostRow label="Cache write" tokens={b.cache_write_tokens} cost={b.cache_write} />
-              <tr className="border-t border-border">
-                <td className="py-1.5 pt-2 text-muted-foreground">Total</td>
-                <td className="py-1.5 pt-2 text-right text-muted-foreground">—</td>
-                <td className="py-1.5 pt-2 text-right font-semibold">{formatCost(total)}</td>
-              </tr>
-            </tbody>
-          </table>
-          <p className="mt-2 text-[10px] text-muted-foreground leading-snug">
-            Computed at Anthropic API rates. If you&apos;re on a Claude subscription (Pro / Max), your actual billing is capped by your plan and won&apos;t match this number.
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CostRow({ label, tokens, cost }: { label: string; tokens: number; cost: number }) {
-  const pct = cost > 0 ? cost : 0;
-  return (
-    <tr>
-      <td className="py-1 text-muted-foreground">{label}</td>
-      <td className="py-1 text-right text-muted-foreground/80">{formatTokens(tokens)}</td>
-      <td className="py-1 text-right">{pct > 0 ? formatCost(pct) : '—'}</td>
-    </tr>
-  );
-}

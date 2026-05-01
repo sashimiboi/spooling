@@ -10,7 +10,7 @@ import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule, type ColDef } from 'ag-grid-community';
 import { useTheme } from '@/components/ThemeProvider';
 import { getGridTheme } from '@/lib/agGridTheme';
-import { fetchApi, postApi, formatCost, formatDate, cleanProject } from '@/lib/api';
+import { fetchApi, postApi, formatDate, cleanProject } from '@/lib/api';
 import { toast } from 'sonner';
 import { MessageContent, ToolBadges, ToolCallList, type ToolCallInfo } from '@/lib/messageParser';
 import { highlightLines, getLangFromPath, type HighlightedLine } from '@/lib/highlight';
@@ -724,7 +724,6 @@ export default function SessionsPage() {
     { field: 'started_at', headerName: 'Started', sortable: true, filter: 'agDateColumnFilter', flex: 1, minWidth: 130, sort: 'desc', valueFormatter: (p) => p.value ? formatDate(p.value) : '', filterValueGetter: (p) => p.data?.started_at ? new Date(p.data.started_at) : null },
     { field: 'message_count', headerName: 'Msgs', sortable: true, filter: 'agNumberColumnFilter', type: 'rightAligned', flex: 0.6, minWidth: 80 },
     { field: 'tool_call_count', headerName: 'Tools', sortable: true, filter: 'agNumberColumnFilter', type: 'rightAligned', flex: 0.6, minWidth: 80 },
-    { field: 'estimated_cost_usd', headerName: 'Cost', sortable: true, filter: 'agNumberColumnFilter', type: 'rightAligned', flex: 0.7, minWidth: 90, valueFormatter: (p) => formatCost(p.value || 0) },
   ], []);
 
   if (loading) {
@@ -756,7 +755,6 @@ export default function SessionsPage() {
               formatDate(sess.started_at),
               `${sess.message_count} msgs`,
               `${sess.tool_call_count} tools`,
-              formatCost(sess.estimated_cost_usd || 0),
             ].filter(Boolean).map((val, i) => (
               <span key={i} className="text-[12px] text-muted-foreground px-1.5 py-0.5 rounded bg-secondary/50">
                 {val}

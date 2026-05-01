@@ -7,10 +7,10 @@ import { AgCharts } from 'ag-charts-react';
 import { ModuleRegistry, AllCommunityModule } from 'ag-charts-community';
 import { useRouter } from 'next/navigation';
 import { useTheme } from '@/components/ThemeProvider';
-import { fetchApi, formatNumber, formatCost, formatDate, cleanProject } from '@/lib/api';
+import { fetchApi, formatNumber, formatDate, cleanProject } from '@/lib/api';
 import { baseChartOptions, categoryAxis, valueAxis, getChartTokens } from '@/lib/agChartTheme';
 import {
-  MessageSquare, Wrench, Coins, FolderOpen, Hash, Activity,
+  MessageSquare, Wrench, FolderOpen, Hash, Activity,
 } from 'lucide-react';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -114,13 +114,6 @@ export default function DashboardPage() {
     { label: 'Messages', value: s.total_messages, icon: MessageSquare },
     { label: 'Tool Calls', value: s.total_tool_calls, icon: Wrench },
     { label: 'Est. Tokens', value: totalTokens, icon: Hash },
-    {
-      label: 'Est. Cost',
-      value: formatCost(s.total_cost_usd || 0),
-      icon: Coins,
-      raw: true,
-      hint: "Estimate based on per-token API rates for each session's model. Actual spend depends on your subscription plan (Claude Max, Cursor Pro, Copilot Pro, etc.) and may differ.",
-    },
     { label: 'Projects', value: overview.projects.length, icon: FolderOpen },
   ];
 
@@ -157,24 +150,17 @@ export default function DashboardPage() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {statCards.map((card) => {
           const Icon = card.icon;
-          const hint = (card as { hint?: string }).hint;
           return (
-            <Card
-              key={card.label}
-              title={hint}
-              aria-label={hint ? `${card.label}. ${hint}` : undefined}
-              className={hint ? "cursor-help" : undefined}
-            >
+            <Card key={card.label}>
               <CardContent className="pt-3 pb-3 px-3">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
                     {card.label}
-                    {hint && <span aria-hidden className="text-[9px] opacity-60">ⓘ</span>}
                   </span>
                   <Icon className="h-3.5 w-3.5 text-muted-foreground" />
                 </div>
                 <div className="text-xl font-semibold">
-                  {card.raw ? card.value : formatNumber(card.value as number)}
+                  {formatNumber(card.value as number)}
                 </div>
               </CardContent>
             </Card>
@@ -217,7 +203,7 @@ export default function DashboardPage() {
                     <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
                       <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
                     </div>
-                    <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="grid grid-cols-2 gap-2 text-center">
                       <div>
                         <div className="text-xs text-muted-foreground">Sessions</div>
                         <div className="text-sm font-semibold tabular-nums">{formatNumber(p.sessions)}</div>
@@ -225,10 +211,6 @@ export default function DashboardPage() {
                       <div>
                         <div className="text-xs text-muted-foreground">Messages</div>
                         <div className="text-sm font-semibold tabular-nums">{formatNumber(p.messages)}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-muted-foreground">Cost (est)</div>
-                        <div className="text-sm font-semibold tabular-nums">{formatCost(p.cost || 0)}</div>
                       </div>
                     </div>
                   </div>
@@ -252,7 +234,7 @@ export default function DashboardPage() {
                   <div className="text-[13px] font-medium">{cleanProject(p.project)}</div>
                   <div className="text-[11px] text-muted-foreground">{p.sessions} sessions</div>
                 </div>
-                <span className="text-xs text-muted-foreground font-mono">{formatCost(p.cost || 0)}</span>
+                <span className="text-xs text-muted-foreground font-mono">{formatNumber(p.messages || 0)} msgs</span>
               </div>
             ))}
           </CardContent>
@@ -307,7 +289,6 @@ export default function DashboardPage() {
                 <div className="flex gap-1.5 shrink-0 ml-4 items-center">
                   <Badge variant="outline" className="text-[10px]">{PROVIDER_LABELS[r.provider_id] || r.provider_id}</Badge>
                   <Badge variant="secondary">{r.message_count} msgs</Badge>
-                  <span className="text-[11px] text-muted-foreground font-mono">{formatCost(r.estimated_cost_usd || 0)}</span>
                 </div>
               </div>
             ))}
