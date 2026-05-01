@@ -188,6 +188,180 @@ def _collect_sessions(
         conn.close()
 
 
+def _collect_traces(session_ids: list[str]) -> list[dict]:
+    """Pull traces + spans + span_events for a list of session_ids.
+
+    Each trace becomes a JSON-serializable dict ready for the
+    /v1/traces/batch endpoint. Spans are sorted by sequence so the
+    server's parent-before-child invariant holds, and span_events
+    ride along on each span.
+    """
+    if not session_ids:
+        return []
+    conn = get_connection()
+    try:
+        traces = conn.execute(
+            """SELECT id, session_id, provider_id, project, title,
+                      started_at, ended_at, duration_ms,
+                      span_count, agent_count, tool_count, llm_count, error_count,
+                      total_input_tokens, total_output_tokens,
+                      total_cache_read_tokens, total_cache_write_tokens,
+                      total_cost_usd, cwd, git_branch, model,
+                      vendor_count, top_vendors, attrs
+               FROM traces WHERE session_id = ANY(%s)""",
+            (session_ids,),
+        ).fetchall()
+
+        out: list[dict] = []
+        for t in traces:
+            tid = t["id"]
+            spans = conn.execute(
+                """SELECT id, parent_id, kind, name, status,
+                          started_at, ended_at, duration_ms, depth, sequence,
+                          input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+                          cost_usd, model, tool_name, tool_input, tool_output, tool_is_error,
+                          agent_type, agent_prompt, vendor, category, attrs
+                   FROM spans WHERE trace_id = %s ORDER BY sequence""",
+                (tid,),
+            ).fetchall()
+
+            spans_payload: list[dict] = []
+            for s in spans:
+                events = conn.execute(
+                    """SELECT name, timestamp, attrs
+                       FROM span_events WHERE span_id = %s ORDER BY id""",
+                    (s["id"],),
+                ).fetchall()
+                spans_payload.append({
+                    "id": s["id"],
+                    "parent_id": s["parent_id"],
+                    "kind": s["kind"],
+                    "name": s["name"],
+                    "status": s["status"] or "ok",
+                    "started_at": s["started_at"].isoformat() if s["started_at"] else None,
+                    "ended_at": s["ended_at"].isoformat() if s["ended_at"] else None,
+                    "duration_ms": int(s["duration_ms"] or 0),
+                    "depth": int(s["depth"] or 0),
+                    "sequence": int(s["sequence"] or 0),
+                    "input_tokens": int(s["input_tokens"] or 0),
+                    "output_tokens": int(s["output_tokens"] or 0),
+                    "cache_read_tokens": int(s["cache_read_tokens"] or 0),
+                    "cache_write_tokens": int(s["cache_write_tokens"] or 0),
+                    "cost_usd": float(s["cost_usd"] or 0),
+                    "model": s["model"],
+                    "tool_name": s["tool_name"],
+                    "tool_input": s["tool_input"],
+                    "tool_output": (s["tool_output"] or "")[:200000] if s["tool_output"] else None,
+                    "tool_is_error": bool(s["tool_is_error"]),
+                    "agent_type": s["agent_type"],
+                    "agent_prompt": (s["agent_prompt"] or "")[:200000] if s["agent_prompt"] else None,
+                    "vendor": s["vendor"],
+                    "category": s["category"],
+                    "attrs": s["attrs"] or {},
+                    "events": [
+                        {
+                            "name": e["name"],
+                            "timestamp": e["timestamp"].isoformat() if e["timestamp"] else None,
+                            "attrs": e["attrs"] or {},
+                        }
+                        for e in events
+                    ],
+                })
+
+            out.append({
+                "id": tid,
+                "session_id": t["session_id"],
+                "provider_id": t["provider_id"],
+                "project": t["project"],
+                "title": t["title"],
+                "started_at": t["started_at"].isoformat() if t["started_at"] else None,
+                "ended_at": t["ended_at"].isoformat() if t["ended_at"] else None,
+                "duration_ms": int(t["duration_ms"] or 0),
+                "span_count": int(t["span_count"] or 0),
+                "agent_count": int(t["agent_count"] or 0),
+                "tool_count": int(t["tool_count"] or 0),
+                "llm_count": int(t["llm_count"] or 0),
+                "error_count": int(t["error_count"] or 0),
+                "total_input_tokens": int(t["total_input_tokens"] or 0),
+                "total_output_tokens": int(t["total_output_tokens"] or 0),
+                "total_cache_read_tokens": int(t["total_cache_read_tokens"] or 0),
+                "total_cache_write_tokens": int(t["total_cache_write_tokens"] or 0),
+                "total_cost_usd": float(t["total_cost_usd"] or 0),
+                "cwd": t["cwd"],
+                "git_branch": t["git_branch"],
+                "model": t["model"],
+                "vendor_count": int(t["vendor_count"] or 0),
+                "top_vendors": t["top_vendors"] or [],
+                "attrs": t["attrs"] or {},
+                "spans": spans_payload,
+            })
+        return out
+    finally:
+        conn.close()
+
+
+def _push_trace_batches(
+    traces: list[dict],
+    batch_size: int,
+    base: str,
+    headers: dict,
+    log,
+) -> tuple[int, int, int, str | None]:
+    """POST traces+spans+events to /v1/traces/batch in chunks.
+
+    Returns ``(accepted, rejected, spans_inserted, error)``. The
+    cloud rejects traces whose session_id isn't in this workspace,
+    so push sessions FIRST and only push traces for those that
+    landed.
+    """
+    if not traces:
+        return 0, 0, 0, None
+    accepted = 0
+    rejected = 0
+    spans_total = 0
+    with httpx.Client(timeout=180) as client:
+        for i in range(0, len(traces), batch_size):
+            chunk = traces[i:i + batch_size]
+            try:
+                r = client.post(
+                    f"{base}/v1/traces/batch",
+                    headers=headers,
+                    json={"traces": chunk},
+                )
+                if r.status_code == 404:
+                    return (
+                        accepted,
+                        rejected,
+                        spans_total,
+                        "Cloud doesn't support `/v1/traces/batch` yet (server is older than 2026-04-30). Ask your admin to redeploy.",
+                    )
+                r.raise_for_status()
+                data = r.json()
+                acc = int(data.get("accepted", 0))
+                rej = int(data.get("rejected", 0))
+                spans = int(data.get("spans_inserted", 0))
+                accepted += acc
+                rejected += rej
+                spans_total += spans
+                if rej:
+                    log(
+                        f"  pushed {acc} trace(s), {spans} span(s)  "
+                        f"[yellow]rejected {rej}[/yellow]"
+                    )
+                else:
+                    log(f"  pushed {acc} trace(s), {spans} span(s)")
+            except httpx.HTTPStatusError as e:
+                return (
+                    accepted,
+                    rejected,
+                    spans_total,
+                    f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+                )
+            except Exception as e:
+                return accepted, rejected, spans_total, str(e)
+    return accepted, rejected, spans_total, None
+
+
 def _push_batches(
     sessions: list[dict],
     batch: int,
@@ -266,7 +440,13 @@ def _push_batches(
     is_flag=True,
     help="Share sessions you've already pushed elsewhere. The cloud writes them as fresh rows in this workspace under deterministically rewritten IDs, so the same source session can live in multiple workspaces. Idempotent on repeat.",
 )
-def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, title_substr: str | None, dry_run: bool, copy: bool):
+@click.option(
+    "--with-spans",
+    "with_spans",
+    is_flag=True,
+    help="Also push trace + span data (per-LLM-call usage, model, cost, tool boundaries, agent boundaries) for each session. Required for the cloud admin GUI's Traces page to show meaningful data. Not yet compatible with --copy.",
+)
+def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, title_substr: str | None, dry_run: bool, copy: bool, with_spans: bool):
     """Push local sessions up to Spooling Cloud.
 
     Without filters, this pushes the most recent ``--limit`` sessions from
@@ -290,6 +470,15 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, ti
     3. When the cwd is generic (e.g. Claude Code launched from ~):
        spool push --title islet --copy
     """
+    if with_spans and copy:
+        console.print(
+            "[red]--with-spans is not compatible with --copy yet. "
+            "Trace IDs reference span IDs which reference parent span IDs; "
+            "remapping all of those for copy mode is a separate change. "
+            "Run sessions with --copy first, then re-run without --copy "
+            "in the destination workspace to push spans.[/red]"
+        )
+        return
     headers = _auth_headers()
     base = _api_base()
     sessions = _collect_sessions(
@@ -304,12 +493,20 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, ti
         return
     if dry_run:
         mode = "copy" if copy else "push"
+        if with_spans:
+            mode = f"{mode} + spans"
         console.print(f"[dim]Dry run ({mode}): {len(sessions)} session(s) would land in {base}[/dim]")
         for s in sessions[:20]:
             title = (s.get("title") or "(untitled)")[:60]
             console.print(f"  [cyan]{s.get('project') or '-'}[/cyan]  {title}")
         if len(sessions) > 20:
             console.print(f"  ... and {len(sessions) - 20} more")
+        if with_spans:
+            traces = _collect_traces([s["id"] for s in sessions])
+            span_count = sum(len(t.get("spans") or []) for t in traces)
+            console.print(
+                f"[dim]  + {len(traces)} trace(s) with {span_count} span(s) ready[/dim]"
+            )
         return
     total, rejected, err = _push_batches(sessions, batch, base, headers, console.print, copy=copy)
     if err:
@@ -327,6 +524,33 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, ti
         )
     else:
         console.print(f"[green]Done.[/green] {total} sessions synced to {base}")
+
+    if with_spans and total > 0:
+        # Push traces only for sessions that landed. Cloud will reject
+        # any whose session isn't in this workspace anyway, but pre-
+        # filtering keeps the request payload smaller.
+        accepted_ids = [s["id"] for s in sessions]
+        traces = _collect_traces(accepted_ids)
+        if not traces:
+            console.print(
+                "[dim]No traces found for those sessions (likely the "
+                "session_id has no rows in the local traces table — "
+                "re-run `spool sync` to regenerate).[/dim]"
+            )
+            return
+        # Smaller per-batch fanout because each trace can carry many spans.
+        trace_batch_size = max(1, min(20, batch // 2 or 5))
+        console.print(f"[dim]Pushing {len(traces)} trace(s) with spans to {base}…[/dim]")
+        t_acc, t_rej, t_spans, t_err = _push_trace_batches(
+            traces, trace_batch_size, base, headers, console.print,
+        )
+        if t_err:
+            console.print(f"[yellow]Trace push failed: {t_err}[/yellow]")
+            return
+        msg = f"[green]Done.[/green] {t_acc} trace(s) and {t_spans} span(s) synced"
+        if t_rej:
+            msg += f" ([yellow]{t_rej} trace(s) rejected[/yellow])"
+        console.print(msg)
 
 
 @cloud.command("watch")
