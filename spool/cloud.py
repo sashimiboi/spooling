@@ -12,6 +12,7 @@ import httpx
 from rich.console import Console
 
 from spool.db import get_connection
+from spool.redact import redact_messages, redact_traces
 
 console = Console()
 
@@ -446,7 +447,13 @@ def _push_batches(
     is_flag=True,
     help="Also push trace + span data (per-LLM-call usage, model, cost, tool boundaries, agent boundaries) for each session. Required for the cloud admin GUI's Traces page to show meaningful data. Not yet compatible with --copy.",
 )
-def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, title_substr: str | None, dry_run: bool, copy: bool, with_spans: bool):
+@click.option(
+    "--no-redact",
+    "no_redact",
+    is_flag=True,
+    help="Skip the client-side secret redactor. By default spool scrubs secrets (Snowflake/AWS/GitHub/OpenAI/Anthropic/Stripe tokens, PEM private keys, KEY=VALUE lines whose key looks sensitive) before pushing. Use this only if you're sure the content is clean and you need raw values.",
+)
+def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, title_substr: str | None, dry_run: bool, copy: bool, with_spans: bool, no_redact: bool):
     """Push local sessions up to Spooling Cloud.
 
     Without filters, this pushes the most recent ``--limit`` sessions from
@@ -491,6 +498,23 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, ti
     if not sessions:
         console.print("[yellow]No local sessions match.[/yellow]")
         return
+
+    # Client-side secret redaction. Default-on; opt-out with --no-redact.
+    if not no_redact:
+        total_redactions = 0
+        sessions_with_hits = 0
+        for s in sessions:
+            _, n = redact_messages(s.get("messages") or [])
+            if n:
+                total_redactions += n
+                sessions_with_hits += 1
+        if total_redactions:
+            console.print(
+                f"[dim]Redacted {total_redactions} secret(s) across "
+                f"{sessions_with_hits} session(s) before push. "
+                f"Use [bold]--no-redact[/bold] to disable.[/dim]"
+            )
+
     if dry_run:
         mode = "copy" if copy else "push"
         if with_spans:
@@ -531,6 +555,13 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, ti
         # filtering keeps the request payload smaller.
         accepted_ids = [s["id"] for s in sessions]
         traces = _collect_traces(accepted_ids)
+        if traces and not no_redact:
+            _, span_redactions = redact_traces(traces)
+            if span_redactions:
+                console.print(
+                    f"[dim]Redacted {span_redactions} secret(s) inside spans "
+                    f"(tool_input/tool_output/agent_prompt/attrs) before push.[/dim]"
+                )
         if not traces:
             console.print(
                 "[dim]No traces found for those sessions (likely the "
@@ -558,7 +589,13 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, ti
 @click.option("--limit", default=1000, show_default=True, help="Max sessions per cycle")
 @click.option("--batch", default=20, show_default=True, help="Sessions per request")
 @click.option("--lookback", default=10, show_default=True, help="Minutes to overlap on each cycle to catch updated sessions")
-def cloud_watch(interval: int, limit: int, batch: int, lookback: int):
+@click.option(
+    "--no-redact",
+    "no_redact",
+    is_flag=True,
+    help="Skip the client-side secret redactor (see `spool push --help`).",
+)
+def cloud_watch(interval: int, limit: int, batch: int, lookback: int, no_redact: bool):
     """Continuously push new local sessions to Spooling Cloud (Ctrl+C to stop)."""
     headers = _auth_headers()
     base = _api_base()
@@ -592,6 +629,13 @@ def cloud_watch(interval: int, limit: int, batch: int, lookback: int):
         if sessions:
             ts = cycle_started.strftime("%H:%M:%S")
             console.print(f"[dim]{ts}[/dim] {len(sessions)} candidate session(s) since {since or 'beginning'}")
+            if not no_redact:
+                redaction_count = 0
+                for s in sessions:
+                    _, n = redact_messages(s.get("messages") or [])
+                    redaction_count += n
+                if redaction_count:
+                    console.print(f"  [dim]Redacted {redaction_count} secret(s) before push[/dim]")
             total, rejected, err = _push_batches(sessions, batch, base, headers, console.print)
             if err:
                 console.print(f"[red]{err}[/red] (will retry next cycle)")
