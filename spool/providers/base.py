@@ -14,6 +14,7 @@ Two shapes of provider:
   between runs (typically a watermark timestamp or page cursor).
 """
 
+import json
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from pathlib import Path
@@ -22,6 +23,18 @@ from spool.parser import ParsedSession
 
 # Registry populated by Provider subclasses
 PROVIDER_REGISTRY: dict[str, type["Provider"]] = {}
+
+# Optional per-host overrides: { "<provider type_id>": "<path>" }.
+# Lets users (and us) repoint a provider without shipping a release when a
+# vendor moves their on-disk session storage.
+PATH_OVERRIDES_FILE = Path.home() / ".config" / "spool" / "paths.json"
+
+
+def _load_path_overrides() -> dict[str, str]:
+    try:
+        return json.loads(PATH_OVERRIDES_FILE.read_text())
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
 
 
 class Provider(ABC):
@@ -58,6 +71,19 @@ class Provider(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} is not file-based")
 
+    def resolved_data_path(self) -> Path:
+        """Return the data path to actually use, honoring user overrides.
+
+        Checks ``~/.config/spool/paths.json`` for a ``type_id``-keyed override
+        before falling back to ``default_data_path()``. All runtime callers
+        (watcher, ingest, status display) should use this; ``default_data_path``
+        is the source-of-truth default baked into the release.
+        """
+        override = _load_path_overrides().get(self.type_id)
+        if override:
+            return Path(override).expanduser()
+        return self.default_data_path()
+
     def discover_session_files(self, data_path: Path | None = None) -> list[Path]:
         """Find all session files for this provider, newest-first."""
         raise NotImplementedError(f"{type(self).__name__} is not file-based")
@@ -76,7 +102,7 @@ class Provider(ABC):
         if self.is_remote:
             return False
         try:
-            return self.default_data_path().exists()
+            return self.resolved_data_path().exists()
         except NotImplementedError:
             return False
 

@@ -15,7 +15,7 @@ class ClaudeCodeProvider(Provider):
         return CLAUDE_PROJECTS_DIR
 
     def discover_session_files(self, data_path: Path | None = None) -> list[Path]:
-        base = data_path or self.default_data_path()
+        base = data_path or self.resolved_data_path()
         if not base.exists():
             return []
         files = []

@@ -86,7 +86,7 @@ def watch(embed: bool = True):
         provider = get_provider(row["type"])
         if not provider:
             continue
-        data_path = provider.default_data_path()
+        data_path = provider.resolved_data_path()
         if row.get("data_path"):
             from pathlib import Path
             custom = Path(row["data_path"]).expanduser()
@@ -99,8 +99,9 @@ def watch(embed: bool = True):
     if not watch_targets:
         from spool.providers.claude_code import ClaudeCodeProvider
         cc = ClaudeCodeProvider()
-        if cc.default_data_path().exists():
-            watch_targets.append((cc, cc.default_data_path()))
+        cc_path = cc.resolved_data_path()
+        if cc_path.exists():
+            watch_targets.append((cc, cc_path))
 
     if not watch_targets:
         console.print("[red]No provider data directories found to watch.[/red]")

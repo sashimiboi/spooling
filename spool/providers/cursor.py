@@ -29,7 +29,7 @@ class CursorProvider(Provider):
     def discover_session_files(self, data_path: Path | None = None) -> list[Path]:
         files = []
         # Workspace-level state.vscdb files (chat data)
-        ws_dir = data_path or CURSOR_WORKSPACE_STORAGE
+        ws_dir = data_path or self.resolved_data_path()
         if ws_dir.exists():
             for vscdb in ws_dir.rglob("state.vscdb"):
                 if _has_cursor_data(vscdb):

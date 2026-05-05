@@ -364,7 +364,7 @@ def sync(embed: bool = True, provider_filter: str | None = None):
             connected.append({
                 "id": type_id,
                 "type": type_id,
-                "data_path": str(prov.default_data_path()),
+                "data_path": str(prov.resolved_data_path()),
             })
 
     if provider_filter:

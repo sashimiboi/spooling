@@ -53,7 +53,7 @@ def init():
         if available:
             files = provider.discover_session_files()
             status = f"[green]{len(files)} session files[/green]"
-        table.add_row(provider.name, status, str(provider.default_data_path()))
+        table.add_row(provider.name, status, str(provider.resolved_data_path()))
 
     console.print(table)
     console.print("\nRun [bold]spool sync[/bold] to ingest sessions from all available providers.")
