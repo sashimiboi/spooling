@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { AlertTriangle, RefreshCw, X } from 'lucide-react';
 import { fetchApi } from '@/lib/api';
 
@@ -71,7 +72,34 @@ function deriveIssues(a: AgentStatus): Issue[] {
   return issues;
 }
 
+// The banner surfaces dev-machine warnings (Ollama down, MCP unreachable,
+// missing models). On a buyer demo it's the first red bar they see, so we
+// only render it when the user opts in via `?debug=1` or
+// `localStorage.spoolDebug = '1'`. Engineers running the OSS locally can
+// flip the flag once and forget. Toggle off with `?debug=0`.
+function useDebugMode(): boolean {
+  const params = useSearchParams();
+  const [enabled, setEnabled] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const fromUrl = params.get('debug');
+    if (fromUrl === '1') {
+      window.localStorage.setItem('spoolDebug', '1');
+      setEnabled(true);
+      return;
+    }
+    if (fromUrl === '0') {
+      window.localStorage.removeItem('spoolDebug');
+      setEnabled(false);
+      return;
+    }
+    setEnabled(window.localStorage.getItem('spoolDebug') === '1');
+  }, [params]);
+  return enabled;
+}
+
 export default function ModelHealthBanner() {
+  const debug = useDebugMode();
   const [issues, setIssues] = useState<Issue[]>([]);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState<string | null>(null);
@@ -96,10 +124,13 @@ export default function ModelHealthBanner() {
   }, []);
 
   useEffect(() => {
+    if (!debug) return;
     check();
     const id = setInterval(check, POLL_MS);
     return () => clearInterval(id);
-  }, [check]);
+  }, [check, debug]);
+
+  if (!debug) return null;
 
   const retry = async () => {
     setRefreshing(true);

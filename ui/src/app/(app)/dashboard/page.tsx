@@ -7,10 +7,10 @@ import { AgCharts } from 'ag-charts-react';
 import { ModuleRegistry, AllCommunityModule } from 'ag-charts-community';
 import { useRouter } from 'next/navigation';
 import { useTheme } from '@/components/ThemeProvider';
-import { fetchApi, formatNumber, formatDate, cleanProject } from '@/lib/api';
+import { fetchApi, formatNumber, formatCost, formatDate, cleanProject } from '@/lib/api';
 import { baseChartOptions, categoryAxis, valueAxis, getChartTokens } from '@/lib/agChartTheme';
 import {
-  MessageSquare, Wrench, FolderOpen, Hash, Activity,
+  MessageSquare, Wrench, FolderOpen, Hash, Activity, DollarSign,
 } from 'lucide-react';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -109,7 +109,11 @@ export default function DashboardPage() {
   const s = overview.summary;
   const totalTokens = (s.total_input_tokens || 0) + (s.total_output_tokens || 0);
 
+  // Spend lives at index 0 — it's the first thing an agency owner reads.
+  // Sessions/Messages/Tool Calls/Tokens are activity proxies; cost is the
+  // outcome they bill on.
   const statCards = [
+    { label: 'Spend', value: s.total_cost_usd || 0, icon: DollarSign, format: 'cost' as const },
     { label: 'Sessions', value: s.total_sessions, icon: Activity },
     { label: 'Messages', value: s.total_messages, icon: MessageSquare },
     { label: 'Tool Calls', value: s.total_tool_calls, icon: Wrench },
@@ -160,7 +164,9 @@ export default function DashboardPage() {
                   <Icon className="h-3.5 w-3.5 text-muted-foreground" />
                 </div>
                 <div className="text-xl font-semibold">
-                  {formatNumber(card.value as number)}
+                  {card.format === 'cost'
+                    ? formatCost(card.value as number)
+                    : formatNumber(card.value as number)}
                 </div>
               </CardContent>
             </Card>
@@ -229,13 +235,23 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-1">
             {overview.projects.slice(0, 8).map((p) => (
-              <div key={p.project} className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
-                <div>
-                  <div className="text-[13px] font-medium">{cleanProject(p.project)}</div>
+              <button
+                key={p.project}
+                onClick={() => router.push(`/traces?project=${encodeURIComponent(p.project)}`)}
+                className="w-full flex items-center justify-between py-1.5 px-2 -mx-2 rounded-md border-b border-border last:border-0 hover:bg-accent text-left transition-colors"
+                title="See traces for this project"
+              >
+                <div className="min-w-0">
+                  <div className="text-[13px] font-medium truncate">{cleanProject(p.project)}</div>
                   <div className="text-[11px] text-muted-foreground">{p.sessions} sessions</div>
                 </div>
-                <span className="text-xs text-muted-foreground font-mono">{formatNumber(p.messages || 0)} msgs</span>
-              </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  {p.cost > 0 && (
+                    <span className="text-xs text-muted-foreground tabular-nums">{formatCost(p.cost)}</span>
+                  )}
+                  <span className="text-xs text-muted-foreground font-mono">{formatNumber(p.messages || 0)} msgs</span>
+                </div>
+              </button>
             ))}
           </CardContent>
         </Card>

@@ -3,7 +3,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { FilterSelect, type FilterOption } from '@/components/ui/filter-select';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { ArrowLeft, ArrowUp, ArrowDown, Copy, Check, Search, X, ExternalLink, Activity, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AgGridReact } from 'ag-grid-react';
@@ -653,8 +655,13 @@ export default function SessionsPage() {
 
   const [search, setSearch] = useState('');
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
+  const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState<DateRange>('all');
   const [resyncing, setResyncing] = useState(false);
+
+  const searchParams = useSearchParams();
+  const projectParam = searchParams.get('project');
+  useEffect(() => { setProjectFilter(projectParam || null); }, [projectParam]);
 
   const copyId = useCallback((id: string) => {
     navigator.clipboard.writeText(id);
@@ -698,12 +705,25 @@ export default function SessionsPage() {
     return Array.from(set);
   }, [sessions]);
 
+  const availableProjects = useMemo(() => {
+    const counts = new Map<string, number>();
+    sessions.forEach((s) => {
+      const p = s.project || '';
+      if (!p) return;
+      counts.set(p, (counts.get(p) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([project, n]) => ({ project, count: n }));
+  }, [sessions]);
+
   const filteredSessions = useMemo(() => {
     const q = search.trim().toLowerCase();
     const cutoff = DATE_RANGES.find(r => r.key === dateRange)?.ms;
     const since = cutoff ? Date.now() - cutoff : null;
     return sessions.filter(s => {
       if (providerFilter && s.provider_id !== providerFilter) return false;
+      if (projectFilter && s.project !== projectFilter) return false;
       if (since && s.started_at && new Date(s.started_at).getTime() < since) return false;
       if (q) {
         const hay = `${s.title || ''} ${s.project || ''} ${s.git_branch || ''} ${s.id}`.toLowerCase();
@@ -711,10 +731,10 @@ export default function SessionsPage() {
       }
       return true;
     });
-  }, [sessions, search, providerFilter, dateRange]);
+  }, [sessions, search, providerFilter, projectFilter, dateRange]);
 
-  const hasActiveFilters = search !== '' || providerFilter !== null || dateRange !== 'all';
-  const clearFilters = useCallback(() => { setSearch(''); setProviderFilter(null); setDateRange('all'); }, []);
+  const hasActiveFilters = search !== '' || providerFilter !== null || projectFilter !== null || dateRange !== 'all';
+  const clearFilters = useCallback(() => { setSearch(''); setProviderFilter(null); setProjectFilter(null); setDateRange('all'); }, []);
 
   const columnDefs = useMemo<ColDef<Session>[]>(() => [
     { field: 'title', headerName: 'Session', sortable: true, filter: 'agTextColumnFilter', flex: 2, minWidth: 240, valueFormatter: (p) => (p.value || 'Untitled').slice(0, 80), tooltipValueGetter: (p) => p.value || 'Untitled' },
@@ -834,6 +854,22 @@ export default function SessionsPage() {
               </button>
             ))}
           </div>
+        )}
+
+        {availableProjects.length > 1 && (
+          <FilterSelect
+            label="Project"
+            value={projectFilter ?? 'all'}
+            onChange={(v) => setProjectFilter(v === 'all' ? null : v)}
+            options={[
+              { value: 'all', label: 'All projects' } as FilterOption,
+              ...availableProjects.map((p) => ({
+                value: p.project,
+                label: cleanProject(p.project),
+                hint: String(p.count),
+              })),
+            ]}
+          />
         )}
 
         <SegmentedToggle

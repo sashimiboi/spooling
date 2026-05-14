@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { FilterSelect, type FilterOption } from '@/components/ui/filter-select';
 import { CheckCircle2, XCircle, AlertCircle, Play, ClipboardList, Calendar } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { fetchApi, postApi, formatDate } from '@/lib/api';
+import { fetchApi, postApi, formatDate, cleanProject } from '@/lib/api';
+import { useSearchParams } from 'next/navigation';
 
 interface Rubric {
   id: string;
@@ -71,7 +72,12 @@ export default function EvalsPage() {
   const [search, setSearch] = useState('');
   const [passFilter, setPassFilter] = useState<'all' | 'passed' | 'failed' | 'null'>('all');
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
+  const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [listWindow, setListWindow] = useState<Window>('all');
+
+  const searchParams = useSearchParams();
+  const projectParam = searchParams.get('project');
+  useEffect(() => { setProjectFilter(projectParam || null); }, [projectParam]);
 
   const loadAll = useCallback(async () => {
     try {
@@ -135,17 +141,30 @@ export default function EvalsPage() {
     return Array.from(set).sort();
   }, [evals]);
 
+  const availableProjects = useMemo(() => {
+    const counts = new Map<string, number>();
+    evals.forEach((e) => {
+      const p = e.project || '';
+      if (!p) return;
+      counts.set(p, (counts.get(p) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([project, n]) => ({ project, count: n }));
+  }, [evals]);
+
   const filteredEvals = useMemo(() => {
     const q = search.trim().toLowerCase();
     return evals.filter((e) => {
       if (rubricFilter && e.rubric_id !== rubricFilter) return false;
+      if (projectFilter && e.project !== projectFilter) return false;
       if (q) {
         const hay = `${e.trace_id || ''} ${e.session_id || ''} ${e.project || ''} ${e.label || ''} ${e.rationale || ''} ${e.rubric_name || e.rubric_id}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [evals, rubricFilter, search]);
+  }, [evals, rubricFilter, projectFilter, search]);
 
   if (loading) {
     return <div className="flex items-center justify-center h-64">
@@ -285,17 +304,32 @@ export default function EvalsPage() {
             ]}
           />
         )}
+        {availableProjects.length > 1 && (
+          <FilterSelect
+            label="Project"
+            value={projectFilter ?? 'all'}
+            onChange={(v) => setProjectFilter(v === 'all' ? null : v)}
+            options={[
+              { value: 'all', label: 'All projects' } as FilterOption,
+              ...availableProjects.map((p) => ({
+                value: p.project,
+                label: cleanProject(p.project),
+                hint: String(p.count),
+              })),
+            ]}
+          />
+        )}
         <FilterSelect
           label="Window"
           value={listWindow}
           onChange={(v) => setListWindow(v as Window)}
           options={WINDOWS.map(w => ({ value: w.key, label: w.label }))}
         />
-        {(search || rubricFilter || providerFilter || passFilter !== 'all' || listWindow !== 'all') && (
+        {(search || rubricFilter || providerFilter || projectFilter || passFilter !== 'all' || listWindow !== 'all') && (
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => { setSearch(''); setRubricFilter(null); setProviderFilter(null); setPassFilter('all'); setListWindow('all'); }}
+            onClick={() => { setSearch(''); setRubricFilter(null); setProviderFilter(null); setProjectFilter(null); setPassFilter('all'); setListWindow('all'); }}
             className="h-8 text-[12px] text-muted-foreground"
           >
             Clear

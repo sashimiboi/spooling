@@ -6,11 +6,12 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { FilterSelect, type FilterOption } from '@/components/ui/filter-select';
 import { ArrowLeft, Activity, Bot, Wrench, Sparkles, AlertCircle, Play, CheckCircle2, XCircle, Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import SpanTree, { Span, SpanBadges, VENDOR_COLORS } from '@/components/SpanTree';
 import TraceConversation from '@/components/TraceConversation';
-import { fetchApi, postApi, formatDate, cleanProject } from '@/lib/api';
+import { fetchApi, postApi, formatDate, formatCost, cleanProject } from '@/lib/api';
 
 interface TraceListRow {
   id: string;
@@ -117,6 +118,7 @@ export default function TracesPage() {
   const [search, setSearch] = useState('');
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [vendorFilter, setVendorFilter] = useState<string | null>(null);
+  const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [windowFilter, setWindowFilter] = useState<WindowKey>('all');
 
   const loadList = useCallback(async () => {
@@ -149,14 +151,27 @@ export default function TracesPage() {
     return Array.from(set).sort();
   }, [traces]);
 
+  const availableProjects = useMemo(() => {
+    const counts = new Map<string, number>();
+    traces.forEach((t) => {
+      const p = t.project || '';
+      if (!p) return;
+      counts.set(p, (counts.get(p) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([project, n]) => ({ project, count: n }));
+  }, [traces]);
+
   const filteredTraces = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return traces;
     return traces.filter((t) => {
+      if (projectFilter && t.project !== projectFilter) return false;
+      if (!q) return true;
       const hay = `${t.title || ''} ${t.project || ''} ${t.session_id || ''} ${t.id} ${t.provider_id || ''} ${t.model || ''}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [traces, search]);
+  }, [traces, search, projectFilter]);
 
   const openTrace = useCallback(async (id: string) => {
     try {
@@ -183,6 +198,14 @@ export default function TracesPage() {
   const searchParams = useSearchParams();
   const traceParam = searchParams.get('trace');
   const sessionParam = searchParams.get('session');
+  const projectParam = searchParams.get('project');
+
+  // Hydrate the project filter from ?project= on first mount and whenever the
+  // URL param changes. This is the deep-link path used by Dashboard / Sessions
+  // / Analytics to drill into "show me Client X."
+  useEffect(() => {
+    setProjectFilter(projectParam || null);
+  }, [projectParam]);
   useEffect(() => {
     let cancelled = false;
     const deepLink = async () => {
@@ -249,6 +272,7 @@ export default function TracesPage() {
             ['Provider', t.provider_id],
             ['Project', cleanProject(t.project || '')],
             ['Duration', formatDuration(t.duration_ms)],
+            ['Cost', t.total_cost_usd > 0 ? formatCost(t.total_cost_usd) : '—'],
             ['Spans', t.span_count],
             ['Agents', t.agent_count],
             ['Tools', t.tool_count],
@@ -492,6 +516,21 @@ export default function TracesPage() {
             ))}
           </div>
         )}
+        {availableProjects.length > 1 && (
+          <FilterSelect
+            label="Project"
+            value={projectFilter ?? 'all'}
+            onChange={(v) => setProjectFilter(v === 'all' ? null : v)}
+            options={[
+              { value: 'all', label: 'All projects' } as FilterOption,
+              ...availableProjects.map((p) => ({
+                value: p.project,
+                label: cleanProject(p.project),
+                hint: String(p.count),
+              })),
+            ]}
+          />
+        )}
         <div className="flex items-center rounded-md border bg-card p-0.5 text-[12px]">
           {(['all', '24h', '7d', '30d'] as WindowKey[]).map((w) => (
             <button
@@ -508,11 +547,11 @@ export default function TracesPage() {
             </button>
           ))}
         </div>
-        {(search || providerFilter || vendorFilter || windowFilter !== 'all') && (
+        {(search || providerFilter || vendorFilter || projectFilter || windowFilter !== 'all') && (
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => { setSearch(''); setProviderFilter(null); setVendorFilter(null); setWindowFilter('all'); }}
+            onClick={() => { setSearch(''); setProviderFilter(null); setVendorFilter(null); setProjectFilter(null); setWindowFilter('all'); }}
             className="h-8 text-[12px] text-muted-foreground"
           >
             Clear
