@@ -272,7 +272,7 @@ export default function TracesPage() {
             ['Provider', t.provider_id],
             ['Project', cleanProject(t.project || '')],
             ['Duration', formatDuration(t.duration_ms)],
-            ['Cost', t.total_cost_usd > 0 ? formatCost(t.total_cost_usd) : '—'],
+            ['Token cost', t.total_cost_usd > 0 ? formatCost(t.total_cost_usd) : '—'],
             ['Spans', t.span_count],
             ['Agents', t.agent_count],
             ['Tools', t.tool_count],

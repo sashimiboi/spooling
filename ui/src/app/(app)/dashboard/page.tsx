@@ -109,11 +109,11 @@ export default function DashboardPage() {
   const s = overview.summary;
   const totalTokens = (s.total_input_tokens || 0) + (s.total_output_tokens || 0);
 
-  // Spend lives at index 0 — it's the first thing an agency owner reads.
-  // Sessions/Messages/Tool Calls/Tokens are activity proxies; cost is the
-  // outcome they bill on.
+  // Token cost lives at index 0 — first thing an agency owner reads.
+  // It's the estimated provider-token cost (Anthropic/OpenAI prices ×
+  // token counts), not Spooling subscription fees or infra cost.
   const statCards = [
-    { label: 'Spend', value: s.total_cost_usd || 0, icon: DollarSign, format: 'cost' as const },
+    { label: 'Token cost', value: s.total_cost_usd || 0, icon: DollarSign, format: 'cost' as const },
     { label: 'Sessions', value: s.total_sessions, icon: Activity },
     { label: 'Messages', value: s.total_messages, icon: MessageSquare },
     { label: 'Tool Calls', value: s.total_tool_calls, icon: Wrench },

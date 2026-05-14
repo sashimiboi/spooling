@@ -333,7 +333,7 @@ export default function AnalyticsPage() {
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Spend',    value: formatCost(s.total_cost_usd || 0) },
+          { label: 'Token cost', value: formatCost(s.total_cost_usd || 0) },
           { label: 'Sessions', value: formatNumber(s.total_sessions || 0) },
           { label: 'Messages', value: formatNumber(s.total_messages || 0) },
           { label: 'Tokens',   value: formatNumber((s.total_input_tokens || 0) + (s.total_output_tokens || 0)) },
