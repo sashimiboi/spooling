@@ -6,7 +6,7 @@ import { useTheme } from '@/components/ThemeProvider';
 import {
   LayoutDashboard, List, Search, BarChart3, Link2,
   ChevronLeft, ChevronRight, MessageCircle, Settings,
-  Sun, Moon, Activity, ClipboardList,
+  Sun, Moon, Activity, ClipboardList, Wrench,
 } from 'lucide-react';
 
 function SpoolLogo({ className }: { className?: string }) {
@@ -39,6 +39,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { url: '/traces', label: 'Traces', icon: Activity, match: (p) => p.startsWith('/traces') },
       { url: '/evals', label: 'Evals', icon: ClipboardList, match: (p) => p.startsWith('/evals') },
+      { url: '/tools', label: 'Tools', icon: Wrench, match: (p) => p.startsWith('/tools') },
       { url: '/analytics', label: 'Analytics', icon: BarChart3, match: (p) => p.startsWith('/analytics') },
       { url: '/chat', label: 'Chat', icon: MessageCircle, match: (p) => p.startsWith('/chat') },
     ],
