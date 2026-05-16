@@ -71,6 +71,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   'kiro': 'Kiro',
   'antigravity': 'Antigravity',
   'gemini': 'Gemini Code Assist',
+  'cortex-code': 'Cortex Code',
 };
 
 const DATE_RANGES: Array<{ key: DateRange; label: string; ms: number | null }> = [

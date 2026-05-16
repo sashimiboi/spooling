@@ -7,6 +7,12 @@ from pathlib import Path
 CLAUDE_DIR = Path.home() / ".claude"
 CLAUDE_PROJECTS_DIR = CLAUDE_DIR / "projects"
 
+# Snowflake Cortex Code data directory. Sessions live in
+# ~/.snowflake/cortex/conversations/<uuid>.history.jsonl with a sidecar
+# <uuid>.json carrying title, working_directory, git info, and timestamps.
+CORTEX_DIR = Path.home() / ".snowflake" / "cortex"
+CORTEX_CONVERSATIONS_DIR = CORTEX_DIR / "conversations"
+
 # Database
 DB_HOST = os.getenv("SPOOL_DB_HOST", "localhost")
 DB_PORT = int(os.getenv("SPOOL_DB_PORT", "5434"))

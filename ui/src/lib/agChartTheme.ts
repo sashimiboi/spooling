@@ -16,6 +16,7 @@ export const PROVIDER_COLORS: Record<string, string> = {
   kiro: '#a855f7',
   antigravity: '#ef4444',
   gemini: '#4285f4',
+  'cortex-code': '#29b5e8',
 };
 
 // One-hue categorical palette: violet hero, then desaturated steps so the

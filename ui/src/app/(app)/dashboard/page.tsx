@@ -59,6 +59,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   'copilot': 'GitHub Copilot',
   'cursor': 'Cursor',
   'windsurf': 'Windsurf',
+  'cortex-code': 'Cortex Code',
 };
 
 const PROVIDER_COLORS: Record<string, string> = {
@@ -67,6 +68,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   'copilot': '#6366f1',
   'cursor': '#06b6d4',
   'windsurf': '#ec4899',
+  'cortex-code': '#29b5e8',
 };
 
 export default function DashboardPage() {

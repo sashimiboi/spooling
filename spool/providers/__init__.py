@@ -9,6 +9,7 @@ from spool.providers.windsurf import WindsurfProvider
 from spool.providers.kiro import KiroProvider
 from spool.providers.antigravity import AntigravityProvider
 from spool.providers.gemini import GeminiProvider
+from spool.providers.cortex_code import CortexCodeProvider
 from spool.providers.gitlab import GitLabProvider
 from spool.providers.github import GitHubProvider
 
@@ -24,6 +25,7 @@ __all__ = [
     "KiroProvider",
     "AntigravityProvider",
     "GeminiProvider",
+    "CortexCodeProvider",
     "GitLabProvider",
     "GitHubProvider",
 ]
