@@ -143,6 +143,13 @@ PROVIDER_TEMPLATES = {
         "description": "Google's Gemini Code Assist VS Code extension and Gemini CLI. Reads chat from extension storage and ~/.gemini/.",
         "status_hint": "Auto-detected from VS Code extension storage and ~/.gemini/.",
     },
+    "opencode": {
+        "name": "opencode",
+        "icon": "opencode",
+        "default_path": "~/.local/share/opencode/opencode.db",
+        "description": "sst/opencode — open-source AI coding agent. Single SQLite DB carrying sessions, messages, and Vercel AI SDK part payloads with per-session token/cost roll-ups.",
+        "status_hint": "Auto-detected from ~/.local/share/opencode/.",
+    },
     "gitlab": {
         "name": "GitLab",
         "icon": "gitlab",

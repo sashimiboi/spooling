@@ -56,6 +56,7 @@ PROVIDER_DEFAULT_MODEL: dict[str, str] = {
     "antigravity":   "gemini-3-pro-preview",
     "codex":         "gpt-5",
     "gemini":        "gemini-2.5-flash",
+    "opencode":      "claude-sonnet-4-6",
 }
 
 _UNKNOWN_MODEL_SENTINELS = {"", "auto", "default", "<synthetic>"}

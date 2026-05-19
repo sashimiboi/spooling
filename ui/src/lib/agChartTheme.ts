@@ -17,6 +17,7 @@ export const PROVIDER_COLORS: Record<string, string> = {
   antigravity: '#ef4444',
   gemini: '#4285f4',
   'cortex-code': '#29b5e8',
+  opencode: '#14b8a6',
 };
 
 // One-hue categorical palette: violet hero, then desaturated steps so the

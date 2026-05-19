@@ -54,6 +54,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   'cursor': 'Cursor',
   'windsurf': 'Windsurf',
   'cortex-code': 'Cortex Code',
+  'opencode': 'opencode',
 };
 
 const PROVIDER_COLORS: Record<string, string> = {
@@ -63,6 +64,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   'cursor': '#06b6d4',
   'windsurf': '#ec4899',
   'cortex-code': '#29b5e8',
+  'opencode': '#14b8a6',
 };
 
 export default function AnalyticsPage() {

@@ -13,6 +13,12 @@ CLAUDE_PROJECTS_DIR = CLAUDE_DIR / "projects"
 CORTEX_DIR = Path.home() / ".snowflake" / "cortex"
 CORTEX_CONVERSATIONS_DIR = CORTEX_DIR / "conversations"
 
+# opencode (sst/opencode) data directory. Single SQLite DB at
+# ~/.local/share/opencode/opencode.db with session/message/part tables
+# (Drizzle-managed). Parts carry the Vercel AI SDK UIMessage payload.
+OPENCODE_DIR = Path.home() / ".local" / "share" / "opencode"
+OPENCODE_DB = OPENCODE_DIR / "opencode.db"
+
 # Database
 DB_HOST = os.getenv("SPOOL_DB_HOST", "localhost")
 DB_PORT = int(os.getenv("SPOOL_DB_PORT", "5434"))
