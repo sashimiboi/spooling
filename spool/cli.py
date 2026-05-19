@@ -50,10 +50,14 @@ def init():
     for type_id, provider in providers.items():
         available = provider.is_available()
         status = "[green]available[/green]" if available else "[dim]not found[/dim]"
-        if available:
-            files = provider.discover_session_files()
-            status = f"[green]{len(files)} session files[/green]"
-        table.add_row(provider.name, status, str(provider.resolved_data_path()))
+        if provider.is_remote:
+            path_str = "[dim](remote API — connect via GUI)[/dim]"
+        else:
+            if available:
+                files = provider.discover_session_files()
+                status = f"[green]{len(files)} session files[/green]"
+            path_str = str(provider.resolved_data_path())
+        table.add_row(provider.name, status, path_str)
 
     console.print(table)
     console.print("\nRun [bold]spool sync[/bold] to ingest sessions from all available providers.")
