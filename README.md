@@ -1,8 +1,8 @@
-# Spool
+# Spooling
 
 Local session tracker and semantic search for AI coding assistants.
 
-Track your AI coding sessions across **Claude Code**, **OpenAI Codex CLI**, **GitHub Copilot**, **Cursor**, **Windsurf**, **Kiro**, **Google Antigravity**, and **opencode**, all in one place. Get usage stats, cost estimates, per-provider breakdowns, semantic search via pgvector, and a built-in AI chat agent to explore your history.
+Track your AI coding sessions across **OpenAI Codex CLI**, **GitHub Copilot**, **Cursor**, **Windsurf**, **Kiro**, **Google Antigravity**, and **opencode**, all in one place. Get usage stats, cost estimates, per-provider breakdowns, semantic search via pgvector, and a built-in AI chat agent to explore your history.
 
 **Website:** [spooling.ai](https://spooling.ai)
 
@@ -20,8 +20,8 @@ Track your AI coding sessions across **Claude Code**, **OpenAI Codex CLI**, **Gi
 ## Quick Start
 
 ```bash
-git clone <repo-url> spool
-cd spool
+git clone <repo-url> spooling
+cd spooling
 
 # 1. Start the database
 docker-compose up -d   # or `docker compose up -d` if using Docker Compose V2
@@ -42,45 +42,31 @@ ollama pull gemma3:4b    # chat agent default
 ollama pull qwen2.5:7b   # tool-capable Strands eval judge
 
 # 4. Check which providers are detected
-spool init
+spooling init
 
 # 5. Sync sessions from all detected providers
-spool sync              # with embeddings (slower, enables semantic search)
-spool sync --no-embed   # without embeddings (faster, for initial setup)
+spooling sync              # with embeddings (slower, enables semantic search)
+spooling sync --no-embed   # without embeddings (faster, for initial setup)
 
 # 6. Install UI dependencies
 cd ui && npm install && cd ..
 
 # 7. Start everything
-spool ui             # API on :3002, MCP on :3004, GUI on :3003
+spooling ui             # API on :3002, MCP on :3004, GUI on :3003
 
-# 8. (Optional) Connect an MCP-compatible agent to Spool. The MCP server
-#    runs automatically with `spool ui` over streamable-HTTP at
-#    http://127.0.0.1:3004/mcp, so any agent (Claude Code, Codex, Cursor,
-#    web agents) can connect by URL. Example for Claude Code:
-claude mcp add --transport http spool http://127.0.0.1:3004/mcp
+# 8. (Optional) Connect an MCP-compatible agent to Spooling. The MCP server
+#    runs automatically with `spooling ui` over streamable-HTTP at
+#    http://127.0.0.1:3004/mcp, so any agent (Codex, Cursor,
+#    web agents) can connect by URL.
 ```
 
 Open **http://localhost:3003** and you're in.
 
 ---
 
-## Connect Spool to your AI coding agent
+## Connect Spooling to your AI coding agent
 
-`spool ui` automatically exposes an MCP server at `http://127.0.0.1:3004/mcp` (HTTP streamable transport). Any MCP-speaking agent can connect to it and pull context from your local KB mid-conversation. The agent gets tools like `spool_search`, `spool_recent_sessions`, `spool_get_session`, `spool_workspace_stats`, and `spool_top_projects`.
-
-### Claude Code
-
-```bash
-claude mcp add spool http://127.0.0.1:3004/mcp --transport http
-claude mcp list   # confirm "spool: ... ✓ Connected"
-```
-
-Then in any Claude Code session, type `/mcp` to see the registered tools. Try:
-
-> *"Use spool_search to find anything in my sessions about the auth refactor."*
-
-> *"Summarize what I worked on this week with spool_recent_sessions."*
+`spooling ui` automatically exposes an MCP server at `http://127.0.0.1:3004/mcp` (HTTP streamable transport). Any MCP-speaking agent can connect to it and pull context from your local KB mid-conversation. The agent gets tools like `spooling_search`, `spooling_recent_sessions`, `spooling_get_session`, `spooling_workspace_stats`, and `spooling_top_projects`.
 
 ### Cursor / Windsurf / Codex / Antigravity
 
@@ -89,7 +75,7 @@ Edit your client's MCP config (usually `~/.cursor/mcp.json`, `~/.codeium/windsur
 ```json
 {
   "mcpServers": {
-    "spool": {
+    "spooling": {
       "type": "http",
       "url": "http://127.0.0.1:3004/mcp"
     }
@@ -97,7 +83,7 @@ Edit your client's MCP config (usually `~/.cursor/mcp.json`, `~/.codeium/windsur
 }
 ```
 
-Restart the client. The `spool` server and its tools should appear in the MCP panel.
+Restart the client. The `spooling` server and its tools should appear in the MCP panel.
 
 ### Generic JSON-RPC smoke test
 
@@ -107,7 +93,7 @@ curl -s http://127.0.0.1:3004/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq
 ```
 
-Should return the five `spool_*` tools. If you get "connection refused", `spool ui` is not running (or its ports got squatted, run `lsof -ti :3004 | xargs kill -9` and retry).
+Should return the five `spool_*` tools. If you get "connection refused", `spooling ui` is not running (or its ports got squatted, run `lsof -ti :3004 | xargs kill -9` and retry).
 
 ---
 
@@ -119,95 +105,95 @@ All CLI commands require the venv to be active and the database running.
 source .venv/bin/activate
 ```
 
-### `spool init`
+### `spooling init`
 
-Check database connection and show which AI coding tool providers are detected on your system. This scans default paths for Claude Code, Codex CLI, GitHub Copilot, Cursor, and Windsurf session data.
+Check database connection and show which AI coding tool providers are detected on your system. This scans default paths for Codex CLI, GitHub Copilot, Cursor, and Windsurf session data.
 
 ```bash
-spool init
+spooling init
 ```
 
-### `spool sync`
+### `spooling sync`
 
 Parse and ingest sessions from all connected providers into the database. Chunks and embeds message content into pgvector for semantic search.
 
 ```bash
-spool sync                      # Full sync with embeddings
-spool sync --no-embed           # Skip embeddings (faster initial sync)
-spool sync -p claude-code       # Sync only Claude Code sessions
-spool sync -p codex             # Sync only Codex CLI sessions
+spooling sync                      # Full sync with embeddings
+spooling sync --no-embed           # Skip embeddings (faster initial sync)
+spooling sync -p cursor            # Sync only Cursor sessions
+spooling sync -p codex             # Sync only Codex CLI sessions
 ```
 
-### `spool stats`
+### `spooling stats`
 
 Show usage statistics - sessions, messages, tool calls, tokens, costs, broken down by project and day.
 
 ```bash
-spool stats             # Overview + last 7 days
-spool stats --week      # Weekly breakdown
-spool stats --days 30   # Last 30 days
+spooling stats             # Overview + last 7 days
+spooling stats --week      # Weekly breakdown
+spooling stats --days 30   # Last 30 days
 ```
 
-### `spool search <query>`
+### `spooling search <query>`
 
 Semantic search across all your session history using natural language.
 
 ```bash
-spool search "snowflake connector"
-spool search "authentication bug" -n 5
-spool search "database migration" -p ~/myproject
+spooling search "snowflake connector"
+spooling search "authentication bug" -n 5
+spooling search "database migration" -p ~/myproject
 ```
 
 Options:
 - `-n, --limit` - Number of results (default: 10)
 - `-p, --project` - Filter by project name
 
-### `spool watch`
+### `spooling watch`
 
 Watch all connected provider directories for new session data and auto-sync in real time.
 
 ```bash
-spool watch
+spooling watch
 ```
 
-### `spool serve`
+### `spooling serve`
 
 Start the API server only (for when you want to run the GUI separately).
 
 ```bash
-spool serve                    # Default: http://127.0.0.1:3002
-spool serve --port 8080        # Custom port
-spool serve --host 0.0.0.0     # Bind to all interfaces
+spooling serve                    # Default: http://127.0.0.1:3002
+spooling serve --port 8080        # Custom port
+spooling serve --host 0.0.0.0     # Bind to all interfaces
 ```
 
-### `spool ui`
+### `spooling ui`
 
 Start the API server, the MCP HTTP server, and the Next.js UI together.
 
 ```bash
-spool ui
+spooling ui
 ```
 
-### `spool mcp`
+### `spooling mcp`
 
-Start the Spool MCP server on its own. Defaults to streamable-HTTP at
+Start the Spooling MCP server on its own. Defaults to streamable-HTTP at
 `http://127.0.0.1:3004/mcp`, which any MCP-compatible agent can connect to
-by URL. `spool ui` already launches this alongside the API, so you only
+by URL. `spooling ui` already launches this alongside the API, so you only
 need to run it directly when you want the MCP server without the GUI.
 
 ```bash
-spool mcp              # streamable-HTTP at http://127.0.0.1:3004/mcp (default)
-spool mcp --stdio      # stdio transport, for stdio-only clients
+spooling mcp              # streamable-HTTP at http://127.0.0.1:3004/mcp (default)
+spooling mcp --stdio      # stdio transport, for stdio-only clients
 ```
 
 ---
 
 ## Spooling Cloud (optional)
 
-By default Spool stays 100% local. If you also want your sessions in the
+By default Spooling stays 100% local. If you also want your sessions in the
 hosted workspace at [spooling.ai](https://spooling.ai) (so teammates can
 search the same pool, or you can chat with sessions from any browser),
-the CLI ships with a `spool cloud` subcommand.
+the CLI ships with a `spooling cloud` subcommand.
 
 ### One-time setup
 
@@ -216,20 +202,20 @@ the CLI ships with a `spool cloud` subcommand.
 2. Save it locally:
 
    ```bash
-   spool cloud login --key sk_live_...
+   spooling cloud login --key sk_live_...
    ```
 
-   The key is stored at `~/.config/spool/cloud.json` with `0600` perms.
+   The key is stored at `~/.config/spooling/cloud.json` with `0600` perms.
    You can override the API base with `--api-url` or the
-   `SPOOL_CLOUD_URL` env var (default: `https://api.spooling.ai`).
+   `SPOOLING_CLOUD_URL` env var (default: `https://api.spooling.ai`).
 
 ### Push once
 
 Send the most recent local sessions up to the cloud:
 
 ```bash
-spool push                 # 100 sessions, batches of 20
-spool push --limit 500     # bigger backfill
+spooling push                 # 100 sessions, batches of 20
+spooling push --limit 500     # bigger backfill
 ```
 
 The server upserts by session id, so re-running is safe.
@@ -240,14 +226,14 @@ Stream new and updated sessions to the cloud on a timer. Stop with
 Ctrl+C.
 
 ```bash
-spool cloud watch                 # every 60s, 1000 sessions/cycle
-spool cloud watch --interval 30   # tighter cadence
-spool cloud watch --lookback 60   # widen the overlap window if you edit old sessions
+spooling cloud watch                 # every 60s, 1000 sessions/cycle
+spooling cloud watch --interval 30   # tighter cadence
+spooling cloud watch --lookback 60   # widen the overlap window if you edit old sessions
 ```
 
 What it does each cycle:
 
-1. Reads `last_push_at` from `~/.config/spool/cloud.json`.
+1. Reads `last_push_at` from `~/.config/spooling/cloud.json`.
 2. Queries local sessions where `started_at >= last_push_at - lookback`
    (default lookback: 10 minutes, so messages appended to an in-progress
    session get re-uploaded).
@@ -260,13 +246,13 @@ not advanced, so the next cycle retries the same window.
 ### Status / logout
 
 ```bash
-spool cloud status   # show what is in the cloud + stored API base
-spool cloud logout   # remove the stored API key
+spooling cloud status   # show what is in the cloud + stored API base
+spooling cloud logout   # remove the stored API key
 ```
 
 ### Auto-start at login (macOS)
 
-Run `spool cloud watch` as a launchd agent so it survives reboots:
+Run `spooling cloud watch` as a launchd agent so it survives reboots:
 
 ```bash
 cat > ~/Library/LaunchAgents/ai.spooling.cloud-watch.plist <<'PLIST'
@@ -277,49 +263,45 @@ cat > ~/Library/LaunchAgents/ai.spooling.cloud-watch.plist <<'PLIST'
     <key>Label</key><string>ai.spooling.cloud-watch</string>
     <key>ProgramArguments</key>
     <array>
-      <string>/usr/local/bin/spool</string>
+      <string>/usr/local/bin/spooling</string>
       <string>cloud</string>
       <string>watch</string>
     </array>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>/tmp/spool-cloud-watch.log</string>
-    <key>StandardErrorPath</key><string>/tmp/spool-cloud-watch.log</string>
+    <key>StandardOutPath</key><string>/tmp/spooling-cloud-watch.log</string>
+    <key>StandardErrorPath</key><string>/tmp/spooling-cloud-watch.log</string>
   </dict>
 </plist>
 PLIST
 launchctl load ~/Library/LaunchAgents/ai.spooling.cloud-watch.plist
 ```
 
-(Adjust the `spool` path with `which spool` if it lives elsewhere.)
+(Adjust the `spooling` path with `which spooling` if it lives elsewhere.)
 
 ---
 
 ## MCP Endpoint
 
-Spool exposes an MCP server so any AI agent can query your session history
+Spooling exposes an MCP server so any AI agent can query your session history
 as a context source. The server runs over **streamable-HTTP** at
-`http://127.0.0.1:3004/mcp` and is started automatically alongside `spool
+`http://127.0.0.1:3004/mcp` and is started automatically alongside `spooling
 ui`.
 
-Drop this into your MCP client config (`~/.mcp.json`, Claude Code, Cursor,
+Drop this into your MCP client config (`~/.mcp.json`, Cursor,
 Codex, or any other streamable-HTTP capable agent):
 
 ```json
 {
   "mcpServers": {
-    "spool": {
+    "spooling": {
       "url": "http://127.0.0.1:3004/mcp"
     }
   }
 }
 ```
 
-Or register it with Claude Code directly:
-
-```bash
-claude mcp add --transport http spool http://127.0.0.1:3004/mcp
-```
+Or register it with an MCP client's config file.
 
 The **Settings** page in the GUI shows the endpoint URL, a copy button, and
 the full config snippet so you don't have to remember it.
@@ -328,7 +310,7 @@ the full config snippet so you don't have to remember it.
 
 | Tool | Purpose |
 |------|---------|
-| `list_traces` | Recent Spool traces, filterable by provider/project |
+| `list_traces` | Recent Spooling traces, filterable by provider/project |
 | `get_trace` | Full detail for one trace: header, spans, eval scores |
 | `search_sessions` | Semantic search over embedded session chunks |
 | `get_stats` | Top-line stats: traces, tokens, cost, errors |
@@ -339,18 +321,18 @@ the full config snippet so you don't have to remember it.
 
 ### Stdio (legacy clients)
 
-For MCP clients that only speak stdio, run `spool mcp --stdio` and register
+For MCP clients that only speak stdio, run `spooling mcp --stdio` and register
 it with the command-based form:
 
 ```bash
-claude mcp add spool $(pwd)/.venv/bin/spool mcp --stdio
+# MCP config for stdio transport
 ```
 
 ---
 
 ## GUI
 
-The Spool GUI runs on **http://localhost:3003** and includes:
+The Spooling GUI runs on **http://localhost:3003** and includes:
 
 | Page | Description |
 |------|-------------|
@@ -359,7 +341,7 @@ The Spool GUI runs on **http://localhost:3003** and includes:
 | **Search** | Semantic search across all session history with similarity scores |
 | **Analytics** | Charts for daily usage, cost trends, token usage, tool distribution, filterable by provider (AG Charts) |
 | **Chat** | AI assistant that can answer questions about your session data (RAG-powered) |
-| **Connections** | Connect/disconnect AI coding tools (Claude Code, Codex, Copilot, Cursor, Windsurf) |
+| **Connections** | Connect/disconnect AI coding tools (Codex, Copilot, Cursor, Windsurf) |
 | **Settings** | Configure the AI chat provider (Ollama or Anthropic) |
 
 ### Running the GUI
@@ -367,14 +349,14 @@ The Spool GUI runs on **http://localhost:3003** and includes:
 ```bash
 # Terminal 1: API server
 source .venv/bin/activate
-spool serve
+spooling serve
 
 # Terminal 2: Next.js dev server
 cd ui
 npm run dev
 ```
 
-Or use `spool ui` to start both at once.
+Or use `spooling ui` to start both at once.
 
 ---
 
@@ -408,16 +390,16 @@ Available models: Sonnet, Haiku, Opus.
 ## Architecture
 
 ```
-spool/
+spooling/
 ├── docker-compose.yml       # PostgreSQL + pgvector
 ├── init.sql                 # Database schema
 ├── pyproject.toml           # Python package config
-├── spool/                   # Python backend
+├── spooling/                   # Python backend
 │   ├── cli.py               # Click CLI
 │   ├── config.py            # Configuration
 │   ├── db.py                # Database connection
-│   ├── providers/           # Provider plugins (claude_code, codex, copilot, cursor, windsurf)
-│   ├── parser.py            # Claude Code JSONL parser
+│   ├── providers/           # Provider plugins (codex, copilot, cursor, windsurf)
+│   ├── parser.py            # Session JSONL parser
 │   ├── embeddings.py        # sentence-transformers (all-MiniLM-L6-v2)
 │   ├── ingest.py            # Sync pipeline
 │   ├── search.py            # pgvector semantic search
@@ -460,13 +442,13 @@ All optional - defaults work out of the box for local development.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SPOOL_DB_HOST` | `localhost` | Database host |
-| `SPOOL_DB_PORT` | `5434` | Database port |
-| `SPOOL_DB_NAME` | `spool` | Database name |
-| `SPOOL_DB_USER` | `spool` | Database user |
-| `SPOOL_DB_PASSWORD` | `spool` | Database password |
-| `SPOOL_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Sentence transformer model |
-| `SPOOL_UI_HOST` | `127.0.0.1` | API server host |
+| `SPOOLING_DB_HOST` | `localhost` | Database host |
+| `SPOOLING_DB_PORT` | `5434` | Database port |
+| `SPOOLING_DB_NAME` | `spooling` | Database name |
+| `SPOOLING_DB_USER` | `spooling` | Database user |
+| `SPOOLING_DB_PASSWORD` | `spooling` | Database password |
+| `SPOOLING_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Sentence transformer model |
+| `SPOOLING_UI_HOST` | `127.0.0.1` | API server host |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key (alternative to setting in UI) |
 
 ---
@@ -475,7 +457,7 @@ All optional - defaults work out of the box for local development.
 
 | Provider | Data Location | Format |
 |----------|--------------|--------|
-| **Claude Code** | `~/.claude/projects/` | UUID-named JSONL files with conversation history, tool calls, git context |
+| **JSONL Sessions** | `~/.sessions/projects/` | UUID-named JSONL files with conversation history, tool calls, git context |
 | **OpenAI Codex CLI** | `~/.codex/sessions/` | `rollout-*.jsonl` files organized by date |
 | **GitHub Copilot** | `~/Library/Application Support/Code/User/workspaceStorage/` | Chat session JSON from VS Code |
 | **Cursor** | `~/Library/Application Support/Cursor/User/workspaceStorage/` | Chat and composer sessions from SQLite |
@@ -484,6 +466,6 @@ All optional - defaults work out of the box for local development.
 | **Google Antigravity** | `~/Library/Application Support/Antigravity/User/workspaceStorage/` | Antigravity chat and agent sessions from SQLite |
 | **opencode** | `~/.local/share/opencode/opencode.db` | sst/opencode SQLite database with session/message/part tables (Vercel AI SDK part shape) |
 
-Run `spool init` to see which providers are detected on your system.
+Run `spooling init` to see which providers are detected on your system.
 
 No data is sent to external servers. Everything runs locally.

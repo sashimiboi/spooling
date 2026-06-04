@@ -54,7 +54,6 @@ interface ProviderStats {
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
-  'claude-code': 'Claude Code',
   'codex': 'OpenAI Codex CLI',
   'copilot': 'GitHub Copilot',
   'cursor': 'Cursor',
@@ -63,7 +62,6 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 const PROVIDER_COLORS: Record<string, string> = {
-  'claude-code': '#d97706',
   'codex': '#10b981',
   'copilot': '#6366f1',
   'cursor': '#06b6d4',

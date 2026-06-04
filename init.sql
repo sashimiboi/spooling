@@ -3,7 +3,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 -- Sessions parsed from AI coding tools
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
-    provider_id TEXT DEFAULT 'claude-code',
+    provider_id TEXT,
     project TEXT,
     cwd TEXT,
     git_branch TEXT,
@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     estimated_input_tokens INTEGER DEFAULT 0,
     estimated_output_tokens INTEGER DEFAULT 0,
     estimated_cost_usd REAL DEFAULT 0,
-    claude_version TEXT,
+    agent_version TEXT,
     model TEXT,
     title TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
@@ -75,7 +75,7 @@ CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON chunks USING ivfflat (embeddi
 CREATE TABLE IF NOT EXISTS providers (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    type TEXT NOT NULL,  -- claude-code, codex, copilot, cursor, windsurf, custom
+    type TEXT NOT NULL,  -- codex, copilot, cursor, windsurf, custom
     status TEXT DEFAULT 'connected',  -- connected, disconnected, error
     data_path TEXT,  -- where session data lives on disk
     icon TEXT,
@@ -85,10 +85,7 @@ CREATE TABLE IF NOT EXISTS providers (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Seed Claude Code as default provider
-INSERT INTO providers (id, name, type, data_path, icon, status)
-VALUES ('claude-code', 'Claude Code', 'claude-code', '~/.claude/projects', 'claude', 'connected')
-ON CONFLICT (id) DO NOTHING;
+-- Default providers are auto-detected on first run.
 
 -- Chat sessions with the Spool assistant
 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -114,7 +111,7 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(chat_sessi
 -- Sync state to track what's been ingested
 CREATE TABLE IF NOT EXISTS sync_state (
     file_path TEXT PRIMARY KEY,
-    provider_id TEXT DEFAULT 'claude-code',
+    provider_id TEXT,
     last_size BIGINT DEFAULT 0,
     last_synced_at TIMESTAMPTZ DEFAULT now()
 );

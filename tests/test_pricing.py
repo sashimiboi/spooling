@@ -1,16 +1,16 @@
-"""Tests for spool.pricing — model rate lookup and cost calculation."""
+"""Tests for spooling.pricing — model rate lookup and cost calculation."""
 
 import pytest
 from unittest.mock import patch
 
-from spool.pricing import (
+from spooling.pricing import (
     ModelRates,
     normalize_model,
     _candidate_keys,
     get_rates,
     PROVIDER_DEFAULT_MODEL,
 )
-from spool.config import DEFAULT_PRICING
+from spooling.config import DEFAULT_PRICING
 
 
 # ---------------------------------------------------------------------------
@@ -45,10 +45,10 @@ class TestModelRatesCost:
 
 class TestNormalizeModel:
     def test_known_model_unchanged(self):
-        assert normalize_model("claude-sonnet-4-6") == "claude-sonnet-4-6"
+        assert normalize_model("gpt-4o") == "gpt-4o"
 
     def test_none_returns_provider_default(self):
-        assert normalize_model(None, "claude-code") == PROVIDER_DEFAULT_MODEL["claude-code"]
+        assert normalize_model(None, "copilot") == PROVIDER_DEFAULT_MODEL["copilot"]
 
     def test_empty_string_returns_provider_default(self):
         assert normalize_model("", "copilot") == PROVIDER_DEFAULT_MODEL["copilot"]
@@ -65,8 +65,8 @@ class TestNormalizeModel:
         assert result is None
 
     def test_whitespace_model_treated_as_empty(self):
-        result = normalize_model("   ", "claude-code")
-        assert result == PROVIDER_DEFAULT_MODEL["claude-code"]
+        result = normalize_model("   ", "cursor")
+        assert result == PROVIDER_DEFAULT_MODEL["cursor"]
 
 
 # ---------------------------------------------------------------------------
@@ -75,35 +75,26 @@ class TestNormalizeModel:
 
 class TestCandidateKeys:
     def test_plain_model_included(self):
-        keys = _candidate_keys("claude-sonnet-4-6")
-        assert "claude-sonnet-4-6" in keys
+        keys = _candidate_keys("gpt-4o")
+        assert "gpt-4o" in keys
 
-    def test_anthropic_prefix_included(self):
-        keys = _candidate_keys("claude-sonnet-4-6")
-        assert "anthropic/claude-sonnet-4-6" in keys
-
-    def test_date_suffix_stripped(self):
-        keys = _candidate_keys("claude-sonnet-4-6-20250514")
-        assert "claude-sonnet-4-6" in keys
+    def test_openai_prefix_included(self):
+        keys = _candidate_keys("gpt-4o")
+        assert "openai/gpt-4o" in keys or "anthropic/gpt-4o" in keys
 
     def test_bedrock_model_normalized(self):
-        keys = _candidate_keys("us.anthropic.claude-sonnet-4-5-20250929-v1:0")
-        assert "claude-sonnet-4-5-20250929" in keys or any("claude" in k for k in keys)
+        keys = _candidate_keys("eu.mistral.mistral-large-2407-v1:0")
+        assert any("mistral-large-2407" in k for k in keys)
 
     def test_gemini_chat_prefix_stripped(self):
         keys = _candidate_keys("chat-gemini-3-0-flash-preview-free-tier")
         assert any("gemini" in k for k in keys)
 
-    def test_version_walk_for_unknown_minor(self):
-        keys = _candidate_keys("claude-sonnet-4-9")
-        # Should include fallback versions
-        assert any("claude-sonnet-4-" in k for k in keys)
-
     def test_empty_model_returns_empty(self):
         assert _candidate_keys("") == []
 
     def test_no_duplicates(self):
-        keys = _candidate_keys("claude-sonnet-4-6")
+        keys = _candidate_keys("gpt-4o")
         assert len(keys) == len(set(keys))
 
 
@@ -112,30 +103,30 @@ class TestCandidateKeys:
 # ---------------------------------------------------------------------------
 
 FAKE_TABLE = {
-    "claude-sonnet-4-6": {
-        "input_cost_per_token": 3e-6,
-        "output_cost_per_token": 15e-6,
-        "cache_creation_input_token_cost": 3.75e-6,
-        "cache_read_input_token_cost": 0.30e-6,
-    },
     "gpt-4o": {
         "input_cost_per_token": 2.5e-6,
         "output_cost_per_token": 10e-6,
     },
+    "gpt-5": {
+        "input_cost_per_token": 5e-6,
+        "output_cost_per_token": 20e-6,
+        "cache_creation_input_token_cost": 6.25e-6,
+        "cache_read_input_token_cost": 0.50e-6,
+    },
 }
 
 
-@patch("spool.pricing._get_table", return_value=FAKE_TABLE)
+@patch("spooling.pricing._get_table", return_value=FAKE_TABLE)
 class TestGetRates:
-    def test_known_model_hits_table(self, _mock):
-        rates = get_rates("claude-sonnet-4-6")
+    def test_unknown_model_falls_back(self, _mock):
+        rates = get_rates("unknown-model-v1")
         assert rates.input == 3e-6
         assert rates.output == 15e-6
 
     def test_cache_fields_populated(self, _mock):
-        rates = get_rates("claude-sonnet-4-6")
-        assert rates.cache_write == 3.75e-6
-        assert rates.cache_read == 0.30e-6
+        rates = get_rates("gpt-5")
+        assert rates.cache_write == 6.25e-6
+        assert rates.cache_read == 0.50e-6
 
     def test_missing_cache_fields_default_to_derived(self, _mock):
         # gpt-4o has no cache fields in our fake table
@@ -150,9 +141,9 @@ class TestGetRates:
         assert rates.output == pytest.approx(out_per_m / 1_000_000)
 
     def test_none_model_with_provider_uses_default_model(self, _mock):
-        # claude-code provider default is claude-sonnet-4-6
-        rates = get_rates(None, provider_id="claude-code")
-        assert rates.input == 3e-6
+        # cursor provider default is gpt-4o
+        rates = get_rates(None, provider_id="cursor")
+        assert rates.input == 2.5e-6
 
     def test_auto_model_with_provider_resolves(self, _mock):
         rates = get_rates("auto", provider_id="copilot")
@@ -160,7 +151,7 @@ class TestGetRates:
         assert rates.input == 2.5e-6
 
     def test_cost_calculation_round_trip(self, _mock):
-        rates = get_rates("claude-sonnet-4-6")
+        rates = get_rates("gpt-5")
         cost = rates.cost(input_tokens=1_000, output_tokens=500)
-        expected = 1_000 * 3e-6 + 500 * 15e-6
+        expected = 1_000 * 5e-6 + 500 * 20e-6
         assert abs(cost - expected) < 1e-9

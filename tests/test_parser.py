@@ -1,4 +1,4 @@
-"""Tests for spool.parser — Claude Code JSONL session parsing."""
+"""Tests for spooling.parser — JSONL session parsing."""
 
 import json
 import uuid
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from spool.parser import parse_session_file, ParsedSession, ParsedMessage
+from spooling.parser import parse_session_file, ParsedSession, ParsedMessage
 
 
 # ---------------------------------------------------------------------------
@@ -35,7 +35,7 @@ def _user(content: str, uid: str | None = None, ts: str = "2025-01-01T10:00:00.0
     }
 
 
-def _assistant(content: str | list, model: str = "claude-sonnet-4-6",
+def _assistant(content: str | list, model: str = "gpt-4o",
                uid: str | None = None, ts: str = "2025-01-01T10:00:01.000Z") -> dict:
     return {
         "type": "assistant",
@@ -71,7 +71,7 @@ class TestBasicParsing:
         f = tmp_path / "my-project" / f"{sid}.jsonl"
         f.parent.mkdir()
         _write_jsonl(f, [
-            _user("Hello, Claude!"),
+            _user("Hello, assistant!"),
             _assistant("Hello! How can I help?"),
         ])
         result = parse_session_file(f)
@@ -123,10 +123,10 @@ class TestMetadataExtraction:
         f.parent.mkdir()
         _write_jsonl(f, [
             _user("hi"),
-            _assistant("hey", model="claude-opus-4-6"),
+            _assistant("hey", model="gpt-5"),
         ])
         result = parse_session_file(f)
-        assert result.model == "claude-opus-4-6"
+        assert result.model == "gpt-5"
 
     def test_cwd_extracted(self, tmp_path):
         f = tmp_path / "proj" / f"{_session_id()}.jsonl"

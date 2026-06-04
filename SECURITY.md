@@ -1,13 +1,13 @@
 # Security policy
 
-Spool indexes AI coding sessions on a developer's own machine. Because the
+Spooling indexes AI coding sessions on a developer's own machine. Because the
 data it touches is, by definition, source code and chat history, security
 matters here. This document describes how we handle vulnerabilities, how
 releases are produced, and what users should verify before installing.
 
 ## Reporting a vulnerability
 
-If you believe you have found a security vulnerability in `spool`, please do
+If you believe you have found a security vulnerability in `spooling`, please do
 **not** open a public GitHub issue. Send a report to:
 
 ```
@@ -18,7 +18,7 @@ Please include:
 
 - A description of the issue and its impact.
 - A reproduction (steps, sample data, or a proof-of-concept script).
-- The affected version (`spool --version`).
+- The affected version (`spooling --version`).
 - Whether you intend to publish details, and on what timeline.
 
 We will acknowledge receipt within 3 business days, share a triage
@@ -33,21 +33,21 @@ ones.
 
 ## Supported versions
 
-Only the latest minor release line receives security updates. While `spool`
+Only the latest minor release line receives security updates. While `spooling`
 is pre-1.0, this means the latest `0.x.y` line is supported and earlier
-`0.x` lines are not. Track the [Releases](https://github.com/sashimiboi/spool/releases)
+`0.x` lines are not. Track the [Releases](https://github.com/sashimiboi/spooling/releases)
 page for the current version.
 
 ## What's in scope
 
-- The `spool` CLI and its API server (`spool ui`)
-- The MCP endpoint Spool exposes
-- The packaging on PyPI as `spool`
-- Documented installation paths (pip, the OSS Docker compose, `spool init`)
+- The `spooling` CLI and its API server (`spooling ui`)
+- The MCP endpoint Spooling exposes
+- The packaging on PyPI as `spooling`
+- Documented installation paths (pip, the OSS Docker compose, `spooling init`)
 
 ## What's out of scope
 
-- Issues that require local code execution to exploit (Spool is local-first;
+- Issues that require local code execution to exploit (Spooling is local-first;
   if an attacker is already on the user's machine, they have everything).
 - Bugs in upstream packages we depend on. Report those upstream; we will
   bump our own pin when a patched version is released.
@@ -57,7 +57,7 @@ page for the current version.
 
 ## Verifying a release
 
-Starting with `0.x.y` (TBD; see CI), every published release of `spool` on
+Starting with `0.x.y` (TBD; see CI), every published release of `spooling` on
 PyPI is signed via [Sigstore](https://www.sigstore.dev/) using GitHub
 Actions OIDC as the identity. There are no long-lived PyPI API tokens.
 
@@ -65,11 +65,11 @@ To verify a release:
 
 ```bash
 pip install --upgrade sigstore
-pip download --no-deps spool==<version>
+pip download --no-deps spooling==<version>
 sigstore verify identity \
-  --cert-identity-regexp "https://github.com/sashimiboi/spool/.+" \
+  --cert-identity-regexp "https://github.com/sashimiboi/spooling/.+" \
   --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
-  spool-<version>-py3-none-any.whl
+  spooling-<version>-py3-none-any.whl
 ```
 
 A successful verify means the wheel was built and uploaded by the signed
@@ -102,7 +102,7 @@ tag. The workflow takes it from there.
 
 If you use Spooling Cloud (the hosted SaaS), session data you choose to
 sync leaves your machine, encrypted in transit, and lives in our AWS
-account. Spool itself does not phone home; Cloud is opt-in via an explicit
+account. Spooling itself does not phone home; Cloud is opt-in via an explicit
 account login. The Cloud security model is documented separately and
 shared with customers under a mutual NDA on request.
 

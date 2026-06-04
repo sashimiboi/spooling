@@ -25,7 +25,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [resolved, setResolved] = useState<'light' | 'dark'>('dark');
 
   useEffect(() => {
-    const stored = localStorage.getItem('spool-theme') as Theme | null;
+    const stored = localStorage.getItem('spooling-theme') as Theme | null;
     if (stored) setThemeState(stored);
   }, []);
 
@@ -46,7 +46,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   const setTheme = (t: Theme) => {
     setThemeState(t);
-    localStorage.setItem('spool-theme', t);
+    localStorage.setItem('spooling-theme', t);
   };
 
   return (

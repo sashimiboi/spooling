@@ -24,11 +24,11 @@ interface AvailableProvider {
 }
 
 const COLORS: Record<string, string> = {
-  claude: 'bg-amber-500', openai: 'bg-emerald-500', github: 'bg-primary',
+  openai: 'bg-emerald-500', github: 'bg-primary',
   cursor: 'bg-violet-500', windsurf: 'bg-cyan-500',
 };
 const LABELS: Record<string, string> = {
-  claude: 'CL', openai: 'AI', github: 'GH', cursor: 'CU', windsurf: 'WS',
+  openai: 'AI', github: 'GH', cursor: 'CU', windsurf: 'WS',
 };
 
 function Avatar({ icon }: { icon: string }) {
@@ -165,7 +165,7 @@ export default function ConnectionsPage() {
             <Card key={p.id}>
               <CardContent className="pt-4 pb-4 space-y-3">
                 <div className="flex items-center gap-2.5">
-                  <Avatar icon={p.icon || 'claude'} />
+                  <Avatar icon={p.icon || 'default'} />
                   <div className="flex-1 min-w-0">
                     <div className="text-[13px] font-semibold">{p.name}</div>
                     <div className="text-[11px] text-muted-foreground truncate font-mono">{p.data_path}</div>

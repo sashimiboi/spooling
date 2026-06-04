@@ -63,7 +63,6 @@ type DateRange = 'all' | '24h' | '7d' | '30d';
 // --- Constants ---
 
 const PROVIDER_LABELS: Record<string, string> = {
-  'claude-code': 'Claude Code',
   'codex': 'Codex CLI',
   'copilot': 'Copilot',
   'cursor': 'Cursor',
@@ -188,10 +187,10 @@ function SegmentedToggle<T extends string>({ options, value, onChange, size = 's
 function usePreferredIde() {
   const [ide, setIde] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
-    return localStorage.getItem('spool-preferred-ide');
+    return localStorage.getItem('spooling-preferred-ide');
   });
   const save = useCallback((key: string) => {
-    localStorage.setItem('spool-preferred-ide', key);
+    localStorage.setItem('spooling-preferred-ide', key);
     setIde(key);
   }, []);
   const option = useMemo(() => IDE_OPTIONS.find(o => o.key === ide) || null, [ide]);

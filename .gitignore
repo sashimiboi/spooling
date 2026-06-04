@@ -10,5 +10,5 @@ ui/.next/
 .env
 
 # x402 paid endpoints — out of OSS scope
-spool/paid.py
+spooling/paid.py
 ui/tsconfig.tsbuildinfo

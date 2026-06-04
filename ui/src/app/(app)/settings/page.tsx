@@ -182,7 +182,7 @@ export default function SettingsPage() {
               <Plug className="h-3.5 w-3.5" /> MCP Endpoint
             </CardTitle>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              Connect any MCP-compatible agent (Claude Code, Codex, Cursor, web agents) to Spool over streamable-HTTP.
+              Connect any MCP-compatible agent (Codex, Cursor, web agents) to Spool over streamable-HTTP.
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -213,7 +213,7 @@ export default function SettingsPage() {
               <pre className="bg-secondary rounded-md p-2.5 text-[11px] font-mono overflow-x-auto leading-snug">
 {`{
   "mcpServers": {
-    "spool": {
+    "spooling": {
       "url": "${agents.mcp.url}"
     }
   }
@@ -225,7 +225,7 @@ export default function SettingsPage() {
                   size="sm"
                   className="h-8 text-[11px]"
                   onClick={() => {
-                    const snippet = `{\n  "mcpServers": {\n    "spool": {\n      "url": "${agents.mcp.url}"\n    }\n  }\n}`;
+                    const snippet = `{\n  "mcpServers": {\n    "spooling": {\n      "url": "${agents.mcp.url}"\n    }\n  }\n}`;
                     navigator.clipboard.writeText(snippet);
                     setCopiedConfig(true);
                     setTimeout(() => setCopiedConfig(false), 1800);
@@ -278,7 +278,7 @@ export default function SettingsPage() {
                 <span className="font-medium text-[13px]">Anthropic</span>
                 <Badge variant="default" className="text-[10px]">API Key</Badge>
               </div>
-              <p className="text-[11px] text-muted-foreground">Use Claude via API. Bring your own key.</p>
+              <p className="text-[11px] text-muted-foreground">Use Anthropic API. Bring your own key.</p>
             </button>
           </div>
         </CardContent>
@@ -397,7 +397,7 @@ export default function SettingsPage() {
             <div>
               <label className="text-[13px] font-medium mb-1.5 block">Model</label>
               <div className="flex flex-wrap gap-1.5">
-                {['claude-sonnet-4-20250514', 'claude-haiku-4-5-20251001', 'claude-opus-4-20250514'].map(m => (
+                {['gemma3:4b', 'qwen2.5:7b'].map(m => (
                   <button
                     key={m}
                     onClick={() => save({ model: m })}
@@ -407,7 +407,7 @@ export default function SettingsPage() {
                         : 'bg-transparent border-border hover:bg-accent'
                     }`}
                   >
-                    {m.replace('claude-', '').replace(/-\d+$/, '')}
+                    {m}
                   </button>
                 ))}
               </div>
@@ -524,16 +524,16 @@ const IDE_OPTIONS = [
 function EditorPreference() {
   const [selected, setSelected] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
-    return localStorage.getItem('spool-preferred-ide');
+    return localStorage.getItem('spooling-preferred-ide');
   });
 
   const pick = (key: string) => {
-    localStorage.setItem('spool-preferred-ide', key);
+    localStorage.setItem('spooling-preferred-ide', key);
     setSelected(key);
   };
 
   const clear = () => {
-    localStorage.removeItem('spool-preferred-ide');
+    localStorage.removeItem('spooling-preferred-ide');
     setSelected(null);
   };
 

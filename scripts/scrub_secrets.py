@@ -1,4 +1,4 @@
-"""Scrub secrets from the LOCAL Spool DB (the Postgres docker container).
+"""Scrub secrets from the LOCAL Spooling DB (the Postgres docker container).
 
 Same regex set as the redactor that runs at push time. Use this to clean up
 sessions that were synced before the redactor existed, or to run a periodic
@@ -13,7 +13,7 @@ Tables scrubbed:
   span_events.attrs       (jsonb)
 
 Usage:
-  cd /Users/anthonyloya/spool
+  cd /Users/anthonyloya/spooling
   ./.venv/bin/python scripts/scrub_secrets.py            # dry-run
   ./.venv/bin/python scripts/scrub_secrets.py --apply
 """
@@ -25,12 +25,12 @@ import json
 import sys
 from pathlib import Path
 
-# Allow running this file directly without installing spool first.
+# Allow running this file directly without installing spooling first.
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from spool.db import get_connection  # noqa: E402
-from spool.redact import redact_text, redact_value  # noqa: E402
+from spooling.db import get_connection  # noqa: E402
+from spooling.redact import redact_text, redact_value  # noqa: E402
 
 
 COARSE_RE = (
@@ -139,7 +139,7 @@ def main():
     args = p.parse_args()
 
     mode = "APPLY" if args.apply else "DRY RUN"
-    print(f"=== Local Spool DB scrub ({mode}) ===")
+    print(f"=== Local Spooling DB scrub ({mode}) ===")
 
     conn = get_connection()
     try:

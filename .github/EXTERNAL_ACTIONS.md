@@ -18,18 +18,18 @@ the repos. Account-side hardening is here.
 - Confirm. Any account without 2FA gets removed; you can re-invite once
   they enable it.
 
-### 2. Configure PyPI Trusted Publisher for `spool`
+### 2. Configure PyPI Trusted Publisher for `spooling`
 
 The release workflow (`.github/workflows/release.yml`) uses GitHub Actions
 OIDC to publish to PyPI. No long-lived token. Enable it once:
 
-- Sign in to https://pypi.org and visit the project page for `spool` (or
+- Sign in to https://pypi.org and visit the project page for `spooling` (or
   the publisher settings if the project is not yet created).
 - Under **Publishing**, click *Add a new publisher*.
 - Choose **GitHub Actions**.
 - Fill in:
   - Owner: `sashimiboi`
-  - Repository: `spool`
+  - Repository: `spooling`
   - Workflow name: `release.yml`
   - Environment name: `pypi`
 - Save.
@@ -45,7 +45,7 @@ This gives the release workflow a review gate before it publishes.
 
 ### 4. Lock down `main` on both repos
 
-For `sashimiboi/spool` and `sashimiboi/spooling-ee`:
+For `sashimiboi/spooling` and `sashimiboi/spooling-ee`:
 
 - **Settings → Branches → Branch protection rules → Add rule** for `main`.
 - Enable:
@@ -63,7 +63,7 @@ For `sashimiboi/spool` and `sashimiboi/spooling-ee`:
 - Turn on **Dependabot alerts**, **Dependabot security updates**, and
   **Dependabot version updates** (with `dependabot.yml` configured for
   pip/npm/github-actions).
-- Apply to both `spool` and `spooling-ee`.
+- Apply to both `spooling` and `spooling-ee`.
 
 ### 6. Set up secret scanning + push protection
 
@@ -99,7 +99,7 @@ Run these every three months. Calendar reminder is the easiest enforcement.
 
 ## Per-release checklist
 
-When cutting a new release of `spool`:
+When cutting a new release of `spooling`:
 
 - Bump the version in `pyproject.toml` on a release branch.
 - Open the PR. Land it on `main` after CI is green.
@@ -125,7 +125,7 @@ When a vulnerability is reported or detected:
 
 ## What's intentionally not on this list
 
-- SOC 2 audit prep. That's a Spooling EE concern, not an OSS spool
+- SOC 2 audit prep. That's a Spooling EE concern, not an OSS spooling
   concern. Track that separately on the EE side.
 - Bug bounty program. Defer until there's enough usage to justify a
   budget.

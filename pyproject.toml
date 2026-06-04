@@ -1,5 +1,5 @@
 [project]
-name = "spool"
+name = "spooling"
 version = "0.1.0"
 description = "Local session tracker and semantic search for AI coding assistants"
 license = "MIT"
@@ -28,10 +28,10 @@ dependencies = [
 ]
 
 [project.scripts]
-spool = "spool.cli:cli"
+spooling = "spooling.cli:cli"
 
 [tool.setuptools.packages.find]
-include = ["spool*"]
+include = ["spooling*"]
 
 [project.optional-dependencies]
 dev = [

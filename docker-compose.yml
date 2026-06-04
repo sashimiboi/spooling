@@ -1,21 +1,21 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: spool-db
+    container_name: spooling-db
     environment:
-      POSTGRES_DB: spool
-      POSTGRES_USER: spool
-      POSTGRES_PASSWORD: spool
+      POSTGRES_DB: spooling
+      POSTGRES_USER: spooling
+      POSTGRES_PASSWORD: spooling
     ports:
       - "5434:5432"
     volumes:
-      - spool_data:/var/lib/postgresql/data
+      - spooling_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U spool"]
+      test: ["CMD-SHELL", "pg_isready -U spooling"]
       interval: 5s
       timeout: 5s
       retries: 5
 
 volumes:
-  spool_data:
+  spooling_data:

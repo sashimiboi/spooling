@@ -48,7 +48,7 @@ interface ConnectedProvider {
 
 const SUGGESTIONS = [
   'What did I work on this week?',
-  'How much have I spent on Claude?',
+  'How much have I spent on AI coding?',
   'Which project has the most sessions?',
   'What tools do I use most?',
   'Summarize my recent coding activity',
@@ -69,10 +69,10 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    try { const v = localStorage.getItem('spool-chat-rightpane'); if (v === '1') setRightPaneCollapsed(true); } catch {}
+    try { const v = localStorage.getItem('spooling-chat-rightpane'); if (v === '1') setRightPaneCollapsed(true); } catch {}
   }, []);
   useEffect(() => {
-    try { localStorage.setItem('spool-chat-rightpane', rightPaneCollapsed ? '1' : '0'); } catch {}
+    try { localStorage.setItem('spooling-chat-rightpane', rightPaneCollapsed ? '1' : '0'); } catch {}
   }, [rightPaneCollapsed]);
 
   const loadHistory = useCallback(async () => {
@@ -238,7 +238,7 @@ export default function ChatPage() {
               </div>
               <div className="flex flex-col items-start leading-tight">
                 <span className="font-medium text-foreground tabular-nums">
-                  {(modelInfo.model || '').replace('claude-', '').replace(/-\d+$/, '')}
+                  {modelInfo.model || ''}
                 </span>
                 <span className="text-[9px] text-muted-foreground uppercase tracking-wider">
                   {modelInfo.provider === 'anthropic' ? 'Anthropic · RAG' : 'Ollama · RAG'}

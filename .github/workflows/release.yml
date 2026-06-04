@@ -1,6 +1,6 @@
 name: Release
 
-# Build, sign, and publish a release of `spool` to PyPI.
+# Build, sign, and publish a release of `spooling` to PyPI.
 #
 # Triggered only by pushing a tag that matches v*.*.* (e.g. v0.2.0).
 # Uses PyPI Trusted Publishers (OIDC) so no long-lived API token is
@@ -15,7 +15,7 @@ name: Release
 #   4. Verify the upload with the snippet in SECURITY.md.
 #
 # One-time setup (see .github/EXTERNAL_ACTIONS.md):
-#   - Configure PyPI Trusted Publisher for project `spool` to trust this repo
+#   - Configure PyPI Trusted Publisher for project `spooling` to trust this repo
 #     and this workflow file.
 #   - Enable mandatory 2FA on the GitHub org.
 #   - Add a `pypi` deployment environment to the repo for review gating.
@@ -88,7 +88,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/spool
+      url: https://pypi.org/p/spooling
     permissions:
       id-token: write
     steps:

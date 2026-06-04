@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS spans (
     tool_input JSONB,
     tool_output TEXT,
     tool_is_error BOOLEAN,
-    -- Agent-specific (e.g., Claude Code subagent_type from Task input)
+    -- Agent-specific (e.g., subagent_type from Task input)
     agent_type TEXT,
     agent_prompt TEXT,
     -- Free-form attrs blob (OTel-shaped); anything not hot-querying above.

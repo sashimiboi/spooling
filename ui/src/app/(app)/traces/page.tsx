@@ -672,7 +672,7 @@ export default function TracesPage() {
             {filteredTraces.length === 0 && (
               <p className="p-6 text-[12px] text-muted-foreground text-center">
                 {traces.length === 0
-                  ? <>No traces yet. Run <code>spool sync</code> to ingest.</>
+                  ? <>No traces yet. Run <code>spooling sync</code> to ingest.</>
                   : 'No traces match your filters.'}
               </p>
             )}

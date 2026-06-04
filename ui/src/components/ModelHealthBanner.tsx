@@ -65,7 +65,7 @@ function deriveIssues(a: AgentStatus): Issue[] {
       severity: 'warning',
       title: 'Spool MCP server is not reachable',
       detail: 'External agents will not be able to query Spool as an MCP context source.',
-      fix: { label: 'Start MCP server', command: 'spool mcp' },
+      fix: { label: 'Start MCP server', command: 'spooling mcp' },
     });
   }
 
@@ -75,7 +75,7 @@ function deriveIssues(a: AgentStatus): Issue[] {
 // The banner surfaces dev-machine warnings (Ollama down, MCP unreachable,
 // missing models). On a buyer demo it's the first red bar they see, so we
 // only render it when the user opts in via `?debug=1` or
-// `localStorage.spoolDebug = '1'`. Engineers running the OSS locally can
+// `localStorage.spoolingDebug = '1'`. Engineers running the OSS locally can
 // flip the flag once and forget. Toggle off with `?debug=0`.
 function useDebugMode(): boolean {
   const params = useSearchParams();
@@ -84,16 +84,16 @@ function useDebugMode(): boolean {
     if (typeof window === 'undefined') return;
     const fromUrl = params.get('debug');
     if (fromUrl === '1') {
-      window.localStorage.setItem('spoolDebug', '1');
+      window.localStorage.setItem('spoolingDebug', '1');
       setEnabled(true);
       return;
     }
     if (fromUrl === '0') {
-      window.localStorage.removeItem('spoolDebug');
+      window.localStorage.removeItem('spoolingDebug');
       setEnabled(false);
       return;
     }
-    setEnabled(window.localStorage.getItem('spoolDebug') === '1');
+    setEnabled(window.localStorage.getItem('spoolingDebug') === '1');
   }, [params]);
   return enabled;
 }
@@ -116,7 +116,7 @@ export default function ModelHealthBanner() {
           severity: 'error',
           title: 'Cannot reach the Spool API',
           detail: 'The API server on :3002 is not responding. Settings, chat, and evals will not work.',
-          fix: { label: 'Start Spool', command: 'spool ui' },
+          fix: { label: 'Start Spooling', command: 'spooling ui' },
         },
       ]);
     }

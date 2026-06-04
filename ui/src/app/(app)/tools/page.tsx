@@ -103,7 +103,7 @@ export default function ToolsPage() {
   }, [connectors, summary]);
 
   // Vendors seen in spans but not explicitly connected — likely MCPs the
-  // agent is already pulling from (e.g. via Claude Code's MCP config) or
+  // agent is already pulling from (e.g. via MCP config) or
   // first-party tool vendors. Show as "Discovered" so the user can decide
   // whether to formally connect them for the Spool chat agent.
   const discoveredVendors = useMemo(() => {

@@ -1,7 +1,7 @@
-"""Tests for spool.redact — secret scrubbing logic."""
+"""Tests for spooling.redact — secret scrubbing logic."""
 
 import pytest
-from spool.redact import redact_text, redact_messages, redact_value, _key_is_sensitive
+from spooling.redact import redact_text, redact_messages, redact_value, _key_is_sensitive
 
 
 # ---------------------------------------------------------------------------
