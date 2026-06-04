@@ -11,9 +11,9 @@ the repos. Account-side hardening is here.
 
 ### 1. Enforce 2FA on the GitHub org
 
-- Sign in to https://github.com/organizations/sashimiboi/settings/security
+- Sign in to https://github.com/organizations/Parsed Analytics/settings/security
 - Under **Authentication security**, enable
-  *Require two-factor authentication for everyone in the sashimiboi
+  *Require two-factor authentication for everyone in the Parsed Analytics
   organization*.
 - Confirm. Any account without 2FA gets removed; you can re-invite once
   they enable it.
@@ -28,7 +28,7 @@ OIDC to publish to PyPI. No long-lived token. Enable it once:
 - Under **Publishing**, click *Add a new publisher*.
 - Choose **GitHub Actions**.
 - Fill in:
-  - Owner: `sashimiboi`
+  - Owner: `Parsed Analytics`
   - Repository: `spooling`
   - Workflow name: `release.yml`
   - Environment name: `pypi`
@@ -45,7 +45,7 @@ This gives the release workflow a review gate before it publishes.
 
 ### 4. Lock down `main` on both repos
 
-For `sashimiboi/spooling` and `sashimiboi/spooling-ee`:
+For `Parsed Analytics/spooling` and `Parsed Analytics/spooling-ee`:
 
 - **Settings → Branches → Branch protection rules → Add rule** for `main`.
 - Enable:

@@ -35,7 +35,7 @@ ones.
 
 Only the latest minor release line receives security updates. While `spooling`
 is pre-1.0, this means the latest `0.x.y` line is supported and earlier
-`0.x` lines are not. Track the [Releases](https://github.com/sashimiboi/spooling/releases)
+`0.x` lines are not. Track the [Releases](https://github.com/parsed-analytics/spooling/releases)
 page for the current version.
 
 ## What's in scope
@@ -67,7 +67,7 @@ To verify a release:
 pip install --upgrade sigstore
 pip download --no-deps spooling==<version>
 sigstore verify identity \
-  --cert-identity-regexp "https://github.com/sashimiboi/spooling/.+" \
+  --cert-identity-regexp "https://github.com/parsed-analytics/spooling/.+" \
   --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
   spooling-<version>-py3-none-any.whl
 ```
@@ -89,7 +89,7 @@ PyPI via the Trusted Publishers OIDC integration.
 
 The repo enforces:
 
-- Mandatory 2FA on the `sashimiboi` GitHub org for any account with write
+- Mandatory 2FA on the `parsed-analytics` GitHub org for any account with write
   access.
 - Branch protection on `main` (no direct pushes, signed commits required,
   status checks must pass).

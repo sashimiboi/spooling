@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local session tracker and semantic search for AI coding assistants"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Anthony Loya" }]
+authors = [{ name = "Parsed Analytics, Inc." }]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
