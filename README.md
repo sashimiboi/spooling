@@ -13,51 +13,56 @@ Track your AI coding sessions across **OpenAI Codex CLI**, **GitHub Copilot**, *
 - **Python 3.11+**
 - **Node.js 18+**
 - **Docker** (for PostgreSQL + pgvector)
+- **pipx** or **uv** (optional, alternative install methods)
 - **Ollama** (optional, for free local AI chat) or an **Anthropic API key**
 
 ---
 
-## Quick Start
+## How it works
+
+**Four commands. Zero cloud.**
+
+### 01 &nbsp; Clone & start the database
 
 ```bash
-git clone <repo-url> spooling
-cd spooling
+git clone https://github.com/sashimiboi/spooling && cd spooling
+docker compose up -d   # postgres + pgvector :5434
+```
 
-# 1. Start the database
-docker-compose up -d   # or `docker compose up -d` if using Docker Compose V2
+### 02 &nbsp; Install backend + UI
 
-#docker-compose up -d  
+Choose one:
 
-# 2. Install Python backend (pulls strands-agents, strands-agents-evals,
-#    ollama, mcp, and everything else declared in pyproject.toml).
-python3 -m venv .venv
-source .venv/bin/activate
+```bash
+# pip (recommended)
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-# 3. Install Ollama + pull the chat and judge models so the chat agent
-#    and Strands eval rubrics work out of the box with no API key.
-brew install ollama
-ollama serve &
-ollama pull gemma3:4b    # chat agent default
-ollama pull qwen2.5:7b   # tool-capable Strands eval judge
+# pipx
+pipx install .
 
-# 4. Check which providers are detected
-spooling init
+# uv
+uv sync
+```
 
-# 5. Sync sessions from all detected providers
-spooling sync              # with embeddings (slower, enables semantic search)
-spooling sync --no-embed   # without embeddings (faster, for initial setup)
+Then install the UI:
 
-# 6. Install UI dependencies
+```bash
 cd ui && npm install && cd ..
+```
 
-# 7. Start everything
-spooling ui             # API on :3002, MCP on :3004, GUI on :3003
+### 03 &nbsp; Detect providers & sync
 
-# 8. (Optional) Connect an MCP-compatible agent to Spooling. The MCP server
-#    runs automatically with `spooling ui` over streamable-HTTP at
-#    http://127.0.0.1:3004/mcp, so any agent (Codex, Cursor,
-#    web agents) can connect by URL.
+```bash
+spooling init      # scan for available providers
+spooling sync      # embed every session into pgvector
+```
+
+### 04 &nbsp; Search & explore
+
+```bash
+spooling ui        # API :3002 · MCP :3004 · GUI :3003
+spooling search "that redis race condition"
 ```
 
 Open **http://localhost:3003** and you're in.
