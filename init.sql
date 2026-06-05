@@ -108,6 +108,19 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(chat_session_id);
 
+-- MCP connectors (local tool servers)
+CREATE TABLE IF NOT EXISTS mcp_connectors (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    auth_header TEXT,
+    transport TEXT DEFAULT 'streamable-http',
+    status TEXT DEFAULT 'disconnected',
+    last_error TEXT,
+    last_checked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- Sync state to track what's been ingested
 CREATE TABLE IF NOT EXISTS sync_state (
     file_path TEXT PRIMARY KEY,
