@@ -128,12 +128,12 @@ function ThinkingPanel({ spans }: { spans: Span[] }) {
                         </Badge>
                       )}
                     </div>
-                    {s.tool_input && (
-                      <pre className="mt-0.5 text-[10px] text-muted-foreground/80 truncate whitespace-pre">
-                        {JSON.stringify(s.tool_input).slice(0, 140)}
-                      </pre>
-                    )}
-                    {s.tool_output && (
+                    {!!s.tool_input && (
+                    <pre className="mt-0.5 text-[10px] text-muted-foreground/80 truncate whitespace-pre">
+                      {JSON.stringify(s.tool_input).slice(0, 140)}
+                    </pre>
+                  )}
+                  {s.tool_output != null && (
                       <pre className="mt-0.5 text-[10px] text-muted-foreground/80 whitespace-pre-wrap max-h-20 overflow-auto">
                         {String(s.tool_output).slice(0, 300)}
                       </pre>

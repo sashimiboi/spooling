@@ -370,16 +370,16 @@ export default function TracesPage() {
                           <pre className="whitespace-pre-wrap bg-secondary/50 p-2 rounded text-[11px] max-h-40 overflow-auto scrollbar-thin">{selectedSpan.agent_prompt}</pre>
                         </div>
                       )}
-                      {selectedSpan.tool_input && (
+                      {selectedSpan.tool_input != null && (
                         <div>
                           <div className="text-muted-foreground text-[11px] mb-1">Tool input</div>
                           <pre className="whitespace-pre-wrap bg-secondary/50 p-2 rounded text-[11px] max-h-40 overflow-auto scrollbar-thin">{JSON.stringify(selectedSpan.tool_input, null, 2)}</pre>
                         </div>
                       )}
-                      {selectedSpan.tool_output && (
+                      {selectedSpan.tool_output != null && (
                         <div>
                           <div className="text-muted-foreground text-[11px] mb-1">Tool output</div>
-                          <pre className="whitespace-pre-wrap bg-secondary/50 p-2 rounded text-[11px] max-h-60 overflow-auto scrollbar-thin">{selectedSpan.tool_output}</pre>
+                          <pre className="whitespace-pre-wrap bg-secondary/50 p-2 rounded text-[11px] max-h-60 overflow-auto scrollbar-thin">{String(selectedSpan.tool_output)}</pre>
                         </div>
                       )}
                     </div>
