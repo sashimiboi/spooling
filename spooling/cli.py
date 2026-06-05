@@ -382,7 +382,7 @@ def pricing():
 @pricing.command("refresh")
 def pricing_refresh():
     """Force-fetch the LiteLLM model pricing table into ~/.spool/model_prices.json."""
-    from spool import pricing as _pricing
+    from spooling import pricing as _pricing
     try:
         data = _pricing.refresh()
         console.print(f"[green]Pricing refreshed:[/green] {len(data)} models cached at {_pricing.CACHE_FILE}")
@@ -395,7 +395,7 @@ def pricing_refresh():
 @click.argument("model", required=False)
 def pricing_show(model):
     """Show the cached pricing for one model, or the source status if no model given."""
-    from spool import pricing as _pricing
+    from spooling import pricing as _pricing
 
     if not model:
         status = _pricing.table_status()
@@ -497,11 +497,11 @@ def ui():
     _check_ollama_preflight()
 
     api_proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "spool.server:app", "--host", "127.0.0.1", "--port", "3002", "--log-level", "warning"],
+        [sys.executable, "-m", "uvicorn", "spooling.server:app", "--host", "127.0.0.1", "--port", "3002", "--log-level", "warning"],
     )
 
     mcp_proc = subprocess.Popen(
-        [sys.executable, "-m", "spool.mcp_server"],
+        [sys.executable, "-m", "spooling.mcp_server"],
     )
 
     try:
