@@ -485,7 +485,19 @@ def ui():
     import os
     import sys
 
-    ui_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui")
+    ui_dir = (
+        os.environ.get("SPOOLING_UI_DIR")
+        or os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui")
+    )
+    if not os.path.isdir(ui_dir):
+        ui_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "ui")
+    if not os.path.isdir(ui_dir):
+        ui_dir = os.path.join(os.path.expanduser("~"), "spooling", "ui")
+    if not os.path.isdir(ui_dir):
+        ui_dir = os.path.join(os.getcwd(), "ui")
+    if not os.path.isdir(ui_dir):
+        console.print("[red]UI directory not found. Set SPOOLING_UI_DIR or run from the repo root.[/red]")
+        raise SystemExit(1)
 
     console.print("[bold]Starting Spooling...[/bold]")
     console.print("  API:  http://127.0.0.1:3002")
