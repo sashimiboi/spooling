@@ -32,7 +32,6 @@ import json
 import os
 import uuid
 from contextlib import contextmanager
-from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Iterator, Optional
 

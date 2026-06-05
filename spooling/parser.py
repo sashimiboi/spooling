@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from spooling.config import SESSIONS_PROJECTS_DIR, CHARS_PER_TOKEN, DEFAULT_PRICING
+from spooling.config import SESSIONS_PROJECTS_DIR, CHARS_PER_TOKEN
 from spooling.tracing import (
     Span,
     SpanKind,
@@ -259,12 +259,6 @@ def _parse_timestamp(raw: str | int | float | None) -> datetime | None:
         except ValueError:
             return None
     return None
-
-
-def _price_for(model: str | None) -> tuple[float, float]:
-    if not model:
-        return DEFAULT_PRICING
-    return MODEL_PRICING.get(model, DEFAULT_PRICING)
 
 
 def _cost_for_usage(model: str | None, usage: dict | None) -> float:

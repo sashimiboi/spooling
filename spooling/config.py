@@ -42,3 +42,6 @@ CHARS_PER_TOKEN = 4
 
 # Default model pricing per 1M tokens (input, output)
 DEFAULT_PRICING = (3.0, 15.0)
+
+# Known model pricing overrides; falls back to LiteLLM pricing API otherwise.
+MODEL_PRICING: dict[str, tuple[float, float]] = {}

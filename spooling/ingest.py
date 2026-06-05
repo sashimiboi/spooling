@@ -6,7 +6,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
-from spooling.config import MODEL_PRICING, DEFAULT_PRICING
+from spooling.config import DEFAULT_PRICING
 from spooling.db import get_connection
 from spooling.parser import ParsedSession
 from spooling.embeddings import embed_texts, chunk_text

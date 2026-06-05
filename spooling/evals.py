@@ -203,9 +203,9 @@ def _build_strands_session(conn, trace_id: str):
     from strands_evals.types.trace import (
         Session, Trace as StrandsTrace, InferenceSpan, ToolExecutionSpan,
         AgentInvocationSpan, ToolConfig,
-        SpanInfo, SpanType, Role, ContentType, TokenUsage,
+        SpanInfo, SpanType, Role, ContentType,
         UserMessage, AssistantMessage, TextContent,
-        ToolCall, ToolResult, ToolCallContent, ToolResultContent,
+        ToolCall, ToolResult,
     )
 
     trace_row = conn.execute(

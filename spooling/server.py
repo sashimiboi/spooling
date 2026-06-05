@@ -3,6 +3,7 @@
 import json
 
 from fastapi import FastAPI, Query
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 

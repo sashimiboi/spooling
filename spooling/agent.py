@@ -158,7 +158,7 @@ async def _chat_anthropic(system: str, messages: list[dict], config: dict) -> st
     if not api_key:
         return "No Anthropic API key configured. Add one in Settings or set ANTHROPIC_API_KEY env var."
 
-    model = config.get("model", "gemma3:4b")
+    model = config.get("model", "claude-sonnet-4-20250514")
 
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
