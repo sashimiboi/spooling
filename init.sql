@@ -118,6 +118,9 @@ CREATE TABLE IF NOT EXISTS mcp_connectors (
     status TEXT DEFAULT 'disconnected',
     last_error TEXT,
     last_checked_at TIMESTAMPTZ,
+    slug TEXT,
+    tools_json JSONB DEFAULT '[]'::jsonb,
+    tool_count INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 

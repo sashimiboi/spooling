@@ -391,14 +391,26 @@ def build_flat_trace_from_messages(
                 cost_usd=cost,
             )
 
+            # Build a lookup by tool name from tool_details (if available)
+            # so we can attach input/output to spans.
+            td_by_name: dict[str, Any] = {}
+            for td in getattr(m, "tool_details", []) or []:
+                td_by_name[td.name] = td
+
             for tool_name in getattr(m, "tools_used", []) or []:
+                td = td_by_name.get(tool_name)
                 tool_span = tb.start_tool(
                     parent=root,
                     name=f"tool:{tool_name}",
                     tool_name=tool_name,
                     started_at=ts,
+                    tool_input={"summary": td.input_summary} if td and td.input_summary else None,
                 )
-                tb.end_span(tool_span, ended_at=ts)
+                tb.end_span(
+                    tool_span,
+                    ended_at=ts,
+                    tool_output=td.result_preview if td and td.result_preview else None,
+                )
         else:
             # User turn — credit estimated input tokens against nothing
             # specific; totals get rolled into the root via a lightweight

@@ -27,6 +27,7 @@ from typing import Any
 
 from spooling.parser import ParsedMessage, ParsedSession, _parse_timestamp
 from spooling.providers.base import RemoteProvider
+from spooling.tracing import build_flat_trace_from_messages
 
 DEFAULT_URL = "https://gitlab.com"
 PAGE_SIZE = 50
@@ -173,7 +174,7 @@ def _mr_to_session(base_url: str, token: str, mr: dict) -> ParsedSession:
     if not project_path:
         project_path = f"project:{project_id}"
 
-    return ParsedSession(
+    session = ParsedSession(
         session_id=session_id,
         project=project_path,
         messages=messages,
@@ -184,3 +185,12 @@ def _mr_to_session(base_url: str, token: str, mr: dict) -> ParsedSession:
         title=mr.get("title"),
         provider_id="gitlab",
     )
+    session.trace = build_flat_trace_from_messages(
+        provider_id="gitlab",
+        session_id=session_id,
+        project=project_path,
+        title=mr.get("title"),
+        messages=messages,
+        git_branch=mr.get("source_branch"),
+    )
+    return session

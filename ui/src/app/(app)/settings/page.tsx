@@ -15,6 +15,8 @@ interface Settings {
   model: string;
   ollama_url: string;
   anthropic_api_key_masked?: string;
+  openai_base_url?: string;
+  openai_api_key_masked?: string;
 }
 
 interface OllamaStatus {
@@ -69,6 +71,8 @@ export default function SettingsPage() {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [agents, setAgents] = useState<AgentStatus | null>(null);
   const [apiKey, setApiKey] = useState('');
+  const [openaiKey, setOpenaiKey] = useState('');
+  const [openaiUrl, setOpenaiUrl] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
@@ -82,6 +86,7 @@ export default function SettingsPage() {
         fetchApi('/api/settings/agents'),
       ]);
       setSettings(s);
+      setOpenaiUrl((s as Settings).openai_base_url || '');
       setOllamaStatus(o);
       setAgents(a);
     } catch (e) { console.error(e); }
@@ -102,12 +107,25 @@ export default function SettingsPage() {
     finally { setSaving(false); }
   };
 
+  const OLLAMA_TOOL_MODELS = [
+    'qwen2.5', 'llama3.1', 'llama3.2', 'llama3.3',
+    'mistral', 'mixtral', 'phi-3', 'phi-4',
+    'gemma3', 'command-r', 'deepseek-v2', 'deepseek-r1',
+    'nemotron', 'llama3-groq-tool-use', 'hermes3',
+  ];
+
+  function isToolCapable(name: string): boolean {
+    const base = name.split(':')[0].toLowerCase().replace(/-coder$/, '');
+    return OLLAMA_TOOL_MODELS.some(p => base.startsWith(p));
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-6 w-6 border-2 border-primary border-t-transparent" /></div>;
   }
 
   const isOllama = settings.provider === 'ollama';
   const isAnthropic = settings.provider === 'anthropic';
+  const isOpenAI = settings.provider === 'openai_compatible';
 
   return (
     <div className="space-y-5 max-w-2xl">
@@ -280,6 +298,20 @@ export default function SettingsPage() {
               </div>
               <p className="text-[11px] text-muted-foreground">Use Anthropic API. Bring your own key.</p>
             </button>
+
+            <button
+              onClick={() => save({ provider: 'openai_compatible' })}
+              className={`p-3 rounded-lg border text-left transition-colors ${
+                isOpenAI ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <Server className="h-3.5 w-3.5" />
+                <span className="font-medium text-[13px]">OpenAI Compatible</span>
+                <Badge variant="default" className="text-[10px]">BYO Endpoint</Badge>
+              </div>
+              <p className="text-[11px] text-muted-foreground">Use any OpenAI-compatible API (OpenCode, OpenRouter, vLLM, etc.).</p>
+            </button>
           </div>
         </CardContent>
       </Card>
@@ -328,11 +360,11 @@ export default function SettingsPage() {
               </p>
             </div>
 
-            {ollamaStatus && ollamaStatus.models.length > 0 && (
+            {ollamaStatus && ollamaStatus.models.filter(isToolCapable).length > 0 && (
               <div>
                 <label className="text-[13px] font-medium mb-1.5 block">Available Models</label>
                 <div className="flex flex-wrap gap-1.5">
-                  {ollamaStatus.models.map(m => (
+                  {ollamaStatus.models.filter(isToolCapable).map(m => (
                     <button
                       key={m}
                       onClick={() => save({ model: m })}
@@ -346,6 +378,11 @@ export default function SettingsPage() {
                     </button>
                   ))}
                 </div>
+                {ollamaStatus.models.filter(m => !isToolCapable(m)).length > 0 && (
+                  <p className="text-[11px] text-muted-foreground mt-1.5">
+                    {ollamaStatus.models.filter(m => !isToolCapable(m)).length} local model{ollamaStatus.models.filter(m => !isToolCapable(m)).length !== 1 ? 's' : ''} hidden (no tool support)
+                  </p>
+                )}
               </div>
             )}
 
@@ -397,7 +434,7 @@ export default function SettingsPage() {
             <div>
               <label className="text-[13px] font-medium mb-1.5 block">Model</label>
               <div className="flex flex-wrap gap-1.5">
-                {['gemma3:4b', 'qwen2.5:7b'].map(m => (
+                {['claude-sonnet-4-20250514', 'claude-haiku-3-5-20241022', 'claude-opus-4-20250514'].map(m => (
                   <button
                     key={m}
                     onClick={() => save({ model: m })}
@@ -415,6 +452,78 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       )}
+      {/* OpenAI Compatible config */}
+      {isOpenAI && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium text-foreground normal-case tracking-normal">OpenAI-Compatible Configuration</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <label className="text-[13px] font-medium mb-1 block">API Base URL</label>
+              <div className="flex gap-2">
+                <Input
+                  value={openaiUrl}
+                  onChange={(e) => setOpenaiUrl(e.target.value)}
+                  placeholder="http://localhost:11434/v1"
+                />
+                <Button variant="outline" size="sm" onClick={() => { save({ openai_base_url: openaiUrl }); }} disabled={!openaiUrl}>
+                  Save
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                The full base URL of any OpenAI-compatible API, e.g. <code className="bg-secondary px-1 rounded text-[11px]">http://localhost:11434/v1</code> for Ollama, or <code className="bg-secondary px-1 rounded text-[11px]">https://api.openai.com/v1</code>.
+              </p>
+            </div>
+
+            <div>
+              <label className="text-[13px] font-medium mb-1 block">API Key (optional)</label>
+              {settings.openai_api_key_masked && (
+                <p className="text-[11px] text-muted-foreground mb-1.5">
+                  Current key: <code className="bg-secondary px-1 rounded">{settings.openai_api_key_masked}</code>
+                </p>
+              )}
+              <div className="flex gap-2">
+                <Input
+                  type="password"
+                  value={openaiKey}
+                  onChange={(e) => setOpenaiKey(e.target.value)}
+                  placeholder="sk-..."
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => { save({ openai_api_key: openaiKey }); setOpenaiKey(''); }}
+                  disabled={!openaiKey}
+                >
+                  Save
+                </Button>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[13px] font-medium mb-1 block">Model</label>
+              <div className="flex gap-2">
+                <Input
+                  value={settings.model || 'gpt-4o-mini'}
+                  onChange={(e) => setSettings({ ...settings, model: e.target.value })}
+                  placeholder="gpt-4o-mini"
+                />
+                <Button variant="outline" size="sm" onClick={() => save({ model: settings.model })}>
+                  Save
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Model identifier your endpoint recognizes, e.g. <code className="bg-secondary px-1 rounded text-[11px]">opencode/big-pickle</code> or <code className="bg-secondary px-1 rounded text-[11px]">gpt-4o-mini</code>.
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Make sure the model supports <strong>tool/function calling</strong> — required for MCP connectors to work.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Agent connectors */}
       <ConnectorsPanel />
 

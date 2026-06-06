@@ -6,7 +6,6 @@ from pathlib import Path
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
-from spooling.config import DEFAULT_PRICING
 from spooling.db import get_connection
 from spooling.parser import ParsedSession
 from spooling.embeddings import embed_texts, chunk_text
@@ -356,7 +355,6 @@ def sync(embed: bool = True, provider_filter: str | None = None):
     # of e.g. Kiro start syncing on the next `spooling sync` without forcing
     # the user back through the Connections page.
     known_types = {row["type"] for row in conn.execute("SELECT type FROM providers").fetchall()}
-    from spooling.providers import get_all_providers
     for type_id, prov in get_all_providers().items():
         if type_id in known_types:
             continue

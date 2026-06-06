@@ -37,6 +37,7 @@ from spooling.parser import (
     _summarize_tool_input,
 )
 from spooling.providers.base import Provider
+from spooling.tracing import build_flat_trace_from_messages
 
 
 def _parse_ts(s: str | None) -> datetime | None:
@@ -221,7 +222,7 @@ class CortexCodeProvider(Provider):
                     ended_at = m.timestamp
                     break
 
-        return [ParsedSession(
+        session = ParsedSession(
             session_id=session_id,
             project=project,
             messages=messages,
@@ -231,4 +232,14 @@ class CortexCodeProvider(Provider):
             git_branch=git_branch,
             title=title,
             provider_id="cortex-code",
-        )]
+        )
+        session.trace = build_flat_trace_from_messages(
+            provider_id="cortex-code",
+            session_id=session_id,
+            project=project,
+            title=title,
+            messages=messages,
+            cwd=cwd,
+            git_branch=git_branch,
+        )
+        return [session]

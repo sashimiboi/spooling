@@ -32,6 +32,7 @@ from typing import Any
 
 from spooling.parser import ParsedMessage, ParsedSession, _parse_timestamp
 from spooling.providers.base import RemoteProvider
+from spooling.tracing import build_flat_trace_from_messages
 
 DEFAULT_API_URL = "https://api.github.com"
 PAGE_SIZE = 50
@@ -207,7 +208,7 @@ def _issue_to_session(api_url: str, token: str, issue: dict) -> ParsedSession:
         if head:
             branch = head.get("ref")
 
-    return ParsedSession(
+    session = ParsedSession(
         session_id=session_id,
         project=repo_full,
         messages=messages,
@@ -218,6 +219,15 @@ def _issue_to_session(api_url: str, token: str, issue: dict) -> ParsedSession:
         title=issue.get("title"),
         provider_id="github",
     )
+    session.trace = build_flat_trace_from_messages(
+        provider_id="github",
+        session_id=session_id,
+        project=repo_full,
+        title=issue.get("title"),
+        messages=messages,
+        git_branch=branch,
+    )
+    return session
 
 
 def _repo_from_issue(issue: dict) -> str:

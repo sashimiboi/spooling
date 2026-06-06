@@ -895,61 +895,33 @@ class ChatRequest(BaseModel):
     messages: list[dict]
     provider: str | None = None
     chat_session_id: str | None = None
+    agent_ids: list[str] | None = None
+    enabled_tools: list[str] | None = None
 
 
 @app.post("/api/chat")
 async def api_chat(body: ChatRequest):
-    import uuid
-    from spooling.agent import chat
+    from fastapi.responses import StreamingResponse
+    from spooling.agent import chat_stream
 
-    chat_out = await chat(body.messages, provider=body.provider)
-    response = chat_out["response"]
-    sources = chat_out.get("sources", [])
+    async def event_stream():
+        async for event in chat_stream(
+            messages=body.messages,
+            chat_session_id=body.chat_session_id,
+            agent_ids=body.agent_ids,
+            enabled_tools=body.enabled_tools,
+        ):
+            yield f"data: {json.dumps(event)}\n\n"
 
-    # Persist chat session
-    conn = get_connection()
-    session_id = body.chat_session_id or str(uuid.uuid4())
-
-    # Get settings for model/provider info
-    settings_row = conn.execute(
-        "SELECT config FROM providers WHERE id = 'spooling-agent'"
-    ).fetchone()
-    config = (settings_row["config"] if settings_row and isinstance(settings_row.get("config"), dict) else {}) if settings_row else {}
-    prov = config.get("provider", "ollama")
-    model = config.get("model", "gemma3:4b")
-
-    # Create or update chat session
-    if not body.chat_session_id:
-        # New session - title from first user message
-        first_msg = body.messages[0]["content"] if body.messages else "New chat"
-        title = first_msg[:80].replace("\n", " ").strip()
-        conn.execute(
-            """INSERT INTO chat_sessions (id, title, model, provider, message_count)
-               VALUES (%s, %s, %s, %s, 2)
-               ON CONFLICT (id) DO UPDATE SET updated_at = now(), message_count = chat_sessions.message_count + 2""",
-            (session_id, title, model, prov),
-        )
-    else:
-        conn.execute(
-            "UPDATE chat_sessions SET updated_at = now(), message_count = message_count + 2 WHERE id = %s",
-            (session_id,),
-        )
-
-    # Save user message + assistant response
-    last_user = body.messages[-1] if body.messages else None
-    if last_user:
-        conn.execute(
-            "INSERT INTO chat_messages (chat_session_id, role, content) VALUES (%s, %s, %s)",
-            (session_id, "user", last_user["content"]),
-        )
-    conn.execute(
-        "INSERT INTO chat_messages (chat_session_id, role, content) VALUES (%s, %s, %s)",
-        (session_id, "assistant", response),
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
-    conn.commit()
-    conn.close()
-
-    return {"response": response, "chat_session_id": session_id, "sources": sources}
 
 
 # --- Chat Session History ---
@@ -963,7 +935,7 @@ async def api_chat_sessions(limit: int = Query(default=30)):
         (limit,),
     ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    return {"sessions": [dict(r) for r in rows]}
 
 
 @app.get("/api/chat/sessions/{session_id}")
@@ -1005,6 +977,8 @@ class SettingsUpdate(BaseModel):
     model: str | None = None
     anthropic_api_key: str | None = None
     ollama_url: str | None = None
+    openai_base_url: str | None = None
+    openai_api_key: str | None = None
 
 
 @app.get("/api/settings")
@@ -1022,6 +996,10 @@ async def api_settings():
             key = config["anthropic_api_key"]
             config["anthropic_api_key_masked"] = f"{key[:8]}...{key[-4:]}" if len(key) > 12 else "***"
             del config["anthropic_api_key"]
+        if config.get("openai_api_key"):
+            key = config["openai_api_key"]
+            config["openai_api_key_masked"] = f"{key[:8]}...{key[-4:]}" if len(key) > 12 else "***"
+            del config["openai_api_key"]
         return config
 
     return {"provider": "ollama", "model": "gemma3:4b", "ollama_url": "http://localhost:11434"}
@@ -1052,6 +1030,10 @@ async def api_update_settings(body: SettingsUpdate):
         config["anthropic_api_key"] = body.anthropic_api_key
     if body.ollama_url is not None:
         config["ollama_url"] = body.ollama_url
+    if body.openai_base_url is not None:
+        config["openai_base_url"] = body.openai_base_url
+    if body.openai_api_key is not None:
+        config["openai_api_key"] = body.openai_api_key
 
     import json as _json
     conn.execute(
@@ -1077,6 +1059,8 @@ async def api_settings_agents():
     chat_provider = cfg.get("provider") or ("anthropic" if _os.getenv("ANTHROPIC_API_KEY") else "ollama")
     chat_model = cfg.get("model") or "gemma3:4b"
     ollama_url = cfg.get("ollama_url") or "http://localhost:11434"
+    openai_base_url = cfg.get("openai_base_url", "").rstrip("/")
+    openai_api_key = cfg.get("openai_api_key", "")
 
     # Probe Ollama once for both chat (if ollama) and judge.
     ollama_status = "disconnected"
@@ -1095,8 +1079,12 @@ async def api_settings_agents():
     # Chat agent
     if chat_provider == "ollama":
         chat_connected = ollama_status == "connected" and chat_model in ollama_models
-    else:
+    elif chat_provider == "anthropic":
         chat_connected = bool(anthropic_key)
+    elif chat_provider == "openai_compatible":
+        chat_connected = bool(openai_base_url)
+    else:
+        chat_connected = False
 
     chat_agent = {
         "name": "Spooling Assistant",
@@ -1106,6 +1094,7 @@ async def api_settings_agents():
         "connected": chat_connected,
         "ollama_url": ollama_url if chat_provider == "ollama" else None,
         "has_key": bool(anthropic_key) if chat_provider == "anthropic" else None,
+        "openai_base_url": openai_base_url if chat_provider == "openai_compatible" else None,
         "purpose": "RAG chat over your session history. Backs the /chat page.",
         "endpoint": "/chat",
     }
@@ -1175,10 +1164,11 @@ async def api_connectors_list():
     try:
         rows = conn.execute(
             """SELECT id, name, url, transport, status, last_error, last_checked_at, created_at,
+                      slug, tool_count, tools_json,
                       CASE WHEN auth_header IS NOT NULL AND auth_header <> '' THEN true ELSE false END AS has_auth
                FROM mcp_connectors ORDER BY created_at ASC"""
         ).fetchall()
-        return [dict(r) for r in rows]
+        return {"connectors": [dict(r) for r in rows]}
     finally:
         conn.close()
 
@@ -1225,10 +1215,11 @@ async def api_connectors_delete(connector_id: str):
 @app.post("/api/connectors/{connector_id}/test")
 async def api_connectors_test(connector_id: str):
     import httpx as _httpx
+    import json as _json
     conn = get_connection()
     try:
         row = conn.execute(
-            "SELECT url, auth_header FROM mcp_connectors WHERE id = %s", (connector_id,)
+            "SELECT url, auth_header, slug FROM mcp_connectors WHERE id = %s", (connector_id,)
         ).fetchone()
         if not row:
             return JSONResponse({"error": "not_found"}, status_code=404)
@@ -1240,36 +1231,132 @@ async def api_connectors_test(connector_id: str):
         if row.get("auth_header"):
             headers["Authorization"] = row["auth_header"]
 
-        # Minimal MCP initialize handshake over streamable-HTTP. A 2xx response
-        # with a session id or a valid JSON-RPC initialize result means the
-        # server is reachable and the auth header (if any) was accepted.
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "spooling", "version": "0.1.0"},
-            },
-        }
-        try:
-            async with _httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(row["url"], headers=headers, json=payload)
-            ok = 200 <= resp.status_code < 300
-            err = None if ok else f"HTTP {resp.status_code}: {resp.text[:200]}"
-        except Exception as e:
-            ok = False
-            err = str(e)[:300]
+        url = row["url"]
 
+        async def _rpc(method: str, params: dict | None = None) -> dict | None:
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1 if method == "initialize" else 2,
+                "method": method,
+                "params": params or {},
+            }
+            try:
+                async with _httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.post(url, headers=headers, json=payload)
+                if not resp.is_success:
+                    return None
+                data = resp.json()
+                return data.get("result")
+            except Exception:
+                return None
+
+        # Step 1: Initialize handshake
+        init_result = await _rpc("initialize", {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "spooling", "version": "0.1.0"},
+        })
+        if not init_result:
+            conn.execute(
+                "UPDATE mcp_connectors SET status = 'error', last_error = 'Initialize failed', last_checked_at = now() WHERE id = %s",
+                (connector_id,),
+            )
+            conn.commit()
+            return {"ok": False, "error": "initialize_failed"}
+
+        # Step 2: Discover tools
+        tools_result = await _rpc("tools/list")
+        tools = []
+        if tools_result and "tools" in tools_result:
+            tools = tools_result["tools"]
+
+        # Update connector with tool cache
+        slug = row.get("slug") or connector_id
         conn.execute(
-            "UPDATE mcp_connectors SET status = %s, last_error = %s, last_checked_at = now() WHERE id = %s",
-            ("connected" if ok else "error", err, connector_id),
+            """UPDATE mcp_connectors
+               SET status = 'connected', last_error = NULL, last_checked_at = now(),
+                   tools_json = %s::jsonb, tool_count = %s, slug = COALESCE(slug, %s)
+               WHERE id = %s""",
+            (_json.dumps(tools), len(tools), slug, connector_id),
         )
         conn.commit()
-        return {"ok": ok, "error": err}
+        return {"ok": True, "tools": len(tools), "tool_names": [t.get("name") for t in tools]}
     finally:
         conn.close()
+
+
+@app.get("/api/chat/status")
+async def api_chat_status():
+    """Model picker status matching cloud's /api/chat/status."""
+    import os as _os
+    import httpx as _httpx
+    conn = get_connection()
+    row = conn.execute("SELECT config FROM providers WHERE id = 'spooling-agent'").fetchone()
+    conn.close()
+    cfg = (row["config"] if row and isinstance(row.get("config"), dict) else {}) if row else {}
+    current = cfg.get("model", "gemma3:4b")
+    api_key = cfg.get("anthropic_api_key") or _os.getenv("ANTHROPIC_API_KEY")
+    ollama_url = cfg.get("ollama_url", "http://localhost:11434")
+    openai_base_url = cfg.get("openai_base_url", "").rstrip("/")
+    openai_api_key = cfg.get("openai_api_key", "")
+
+    ollama_ok = False
+    ollama_models = []
+    try:
+        async with _httpx.AsyncClient(timeout=3) as client:
+            resp = await client.get(f"{ollama_url}/api/tags")
+            if resp.is_success:
+                ollama_models = [m["name"] for m in resp.json().get("models", [])]
+                ollama_ok = True
+    except Exception:
+        pass
+
+    models = []
+    for m_name in ["gemma3:4b", "gemma3:12b", "llama3.2:3b", "qwen2.5:7b", "qwen2.5:14b"]:
+        models.append({
+            "id": m_name,
+            "label": m_name,
+            "provider": "ollama",
+            "available": m_name in ollama_models,
+        })
+    for m_name in ["claude-sonnet-4-20250514", "claude-haiku-3-5-20241022", "claude-opus-4-20250514"]:
+        models.append({
+            "id": m_name,
+            "label": m_name,
+            "provider": "anthropic",
+            "available": bool(api_key),
+            "requiresKey": "Anthropic",
+        })
+
+    byok = []
+    if api_key:
+        byok.append("anthropic")
+    if openai_api_key or openai_base_url:
+        byok.append("openai_compatible")
+
+    return {
+        "current": current,
+        "models": models,
+        "ollama_ok": ollama_ok,
+        "byok": byok,
+        "has_anthropic": bool(api_key),
+        "openai_compatible": bool(openai_base_url),
+    }
+
+
+@app.post("/api/settings/agent")
+async def api_settings_agent(body: dict):
+    """Update chat model (used by cloud model picker)."""
+    conn = get_connection()
+    chat_model = body.get("chat_model")
+    if chat_model:
+        row = conn.execute("SELECT config FROM providers WHERE id = 'spooling-agent'").fetchone()
+        cfg = (row["config"] if row and isinstance(row.get("config"), dict) else {}) if row else {}
+        cfg["model"] = chat_model
+        conn.execute("UPDATE providers SET config = %s WHERE id = 'spooling-agent'", (json.dumps(cfg),))
+        conn.commit()
+    conn.close()
+    return {"status": "ok"}
 
 
 @app.get("/api/settings/check-ollama")

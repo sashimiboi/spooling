@@ -123,9 +123,10 @@ def _build_message(
 
         if _part_is_tool(ptype):
             name = _tool_name_from_part(ptype, p)
-            inp = p.get("input") or p.get("args") or {}
-            call_id = p.get("toolCallId") or p.get("id") or p.get("tool_use_id") or ""
-            output = p.get("output") or p.get("result")
+            state = p.get("state") or {}
+            inp = state.get("input") or p.get("input") or p.get("args") or {}
+            call_id = p.get("toolCallId") or p.get("id") or p.get("tool_use_id") or p.get("callID") or ""
+            output = state.get("output") or p.get("output") or p.get("result")
 
             input_summary = ""
             if isinstance(inp, dict) and inp:
