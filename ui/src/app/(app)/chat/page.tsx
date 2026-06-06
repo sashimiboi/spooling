@@ -4,10 +4,10 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Bot, Send, Square, ChevronDown, Check, Loader2, Plus, Trash2, MessageSquare, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Search, Database, Sparkles, CheckCircle2, Wrench, Plug, AlertCircle } from "lucide-react";
+import { Bot, Send, Square, ChevronDown, Check, Loader2, Plus, Trash2, MessageSquare, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Search, Database, Sparkles, CheckCircle2, Wrench, Plug, AlertCircle, ChevronRight, Code } from "lucide-react";
 
-type StepKind = "search" | "workspace" | "model" | "done";
-interface Step { kind: StepKind; label: string; detail?: string; done: boolean }
+type StepKind = "search" | "workspace" | "model" | "done" | "tool_call";
+interface Step { kind: StepKind; label: string; detail?: string; tool_input?: string; tool_result?: string; done: boolean }
 type Msg = {
   role: "user" | "assistant";
   content: string;
@@ -186,7 +186,7 @@ export default function ChatPage() {
               using?: string;
               error?: string;
               detail?: string;
-              step?: { kind: StepKind; label: string; detail?: string; done?: boolean };
+              step?: { kind: StepKind; label: string; detail?: string; tool_input?: string; tool_result?: string; done?: boolean };
             };
             if (evt.type === "delta" && evt.text) {
               assembled += evt.text;
@@ -202,7 +202,7 @@ export default function ChatPage() {
                 const current = copy[assistantIdx];
                 const steps = current.steps ? [...current.steps] : [];
                 const existing = steps.findIndex((s) => s.kind === step.kind);
-                const next: Step = { kind: step.kind, label: step.label, detail: step.detail, done: step.done ?? false };
+                const next: Step = { kind: step.kind, label: step.label, detail: step.detail, tool_input: step.tool_input, tool_result: step.tool_result, done: step.done ?? false };
                 if (existing >= 0) steps[existing] = next;
                 else steps.push(next);
                 copy[assistantIdx] = { ...current, steps };
@@ -552,25 +552,55 @@ export default function ChatPage() {
 }
 
 function StepsStrip({ steps }: { steps: Step[] }) {
+  const [expandedTool, setExpandedTool] = useState<string | null>(null);
   const ICONS: Record<StepKind, React.ComponentType<{ size?: number; style?: React.CSSProperties }>> = {
     search: Search,
     workspace: Database,
     model: Sparkles,
     done: CheckCircle2,
+    tool_call: Code,
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10, padding: 8, borderRadius: 8, background: "var(--surface)", border: "1px solid var(--border)" }}>
       {steps.map((s, i) => {
         const Icon = ICONS[s.kind] ?? Sparkles;
         const iconColor = s.done ? "#34d399" : s.kind === "model" ? "#a78bfa" : "#fbbf24";
+        const isToolCall = s.kind === "tool_call";
+        const isExpanded = expandedTool === `${i}`;
         return (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--muted)" }}>
-            {s.done
-              ? <CheckCircle2 size={11} style={{ color: "#34d399", flexShrink: 0 }} />
-              : <Icon size={11} style={{ color: iconColor, flexShrink: 0 }} />}
-            <span style={{ fontWeight: 500, color: s.done ? "var(--muted)" : "var(--fg)" }}>{s.label}</span>
-            {s.detail && <span style={{ color: "var(--muted-2)" }}>{s.detail}</span>}
-            {!s.done && s.kind !== "done" && <Loader2 size={10} className="spin" style={{ color: "var(--muted-2)", flexShrink: 0 }} />}
+          <div key={i}>
+            <div
+              style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--muted)", cursor: isToolCall && s.done ? "pointer" : "default" }}
+              onClick={() => isToolCall && s.done && setExpandedTool(isExpanded ? null : `${i}`)}
+            >
+              {s.done
+                ? (isToolCall
+                    ? <Code size={11} style={{ color: "#34d399", flexShrink: 0 }} />
+                    : <CheckCircle2 size={11} style={{ color: "#34d399", flexShrink: 0 }} />)
+                : <Icon size={11} style={{ color: iconColor, flexShrink: 0 }} />}
+              <span style={{ fontWeight: 500, color: s.done ? "var(--muted)" : "var(--fg)" }}>{s.label}</span>
+              {s.detail && <span style={{ color: "var(--muted-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 240 }}>{s.detail}</span>}
+              {!s.done && s.kind !== "done" && <Loader2 size={10} className="spin" style={{ color: "var(--muted-2)", flexShrink: 0 }} />}
+              {isToolCall && s.done && (
+                <ChevronRight size={11} style={{ color: "var(--muted-2)", flexShrink: 0, marginLeft: "auto", transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 120ms" }} />
+              )}
+            </div>
+            {isExpanded && isToolCall && s.done && (
+              <div style={{ marginTop: 4, marginLeft: 19, padding: "6px 8px", borderRadius: 6, background: "rgba(0,0,0,0.15)", border: "1px solid var(--border)", fontSize: 11, lineHeight: 1.5 }}>
+                {s.tool_input && (
+                  <div style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: 9, fontWeight: 600, color: "var(--muted-2)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Input</div>
+                    <pre style={{ margin: 0, fontSize: 10, color: "var(--muted)", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 120, overflow: "auto" }}>{s.tool_input}</pre>
+                  </div>
+                )}
+                {s.tool_result && (
+                  <div>
+                    <div style={{ fontSize: 9, fontWeight: 600, color: "var(--muted-2)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Result</div>
+                    <pre style={{ margin: 0, fontSize: 10, color: "var(--muted)", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 200, overflow: "auto" }}>{s.tool_result}</pre>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         );
       })}

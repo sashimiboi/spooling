@@ -605,9 +605,10 @@ async def chat_stream(
                         yield {
                             "type": "step",
                             "step": {
-                                "kind": "search",
+                                "kind": "tool_call",
                                 "label": f"Tool: {label_name}",
-                                "detail": json.dumps(tinput)[:80] if tinput else "",
+                                "detail": json.dumps(tinput)[:120] if tinput else "",
+                                "tool_input": json.dumps(tinput) if tinput else "",
                                 "done": False,
                             },
                         }
@@ -625,9 +626,10 @@ async def chat_stream(
                         yield {
                             "type": "step",
                             "step": {
-                                "kind": "search",
+                                "kind": "tool_call",
                                 "label": f"Tool: {label_name}",
-                                "detail": f"{len(result)} bytes",
+                                "detail": result[:200] if result else "done",
+                                "tool_result": result[:2000] if result else "",
                                 "done": True,
                             },
                         }
@@ -736,9 +738,10 @@ async def chat_stream(
                         yield {
                             "type": "step",
                             "step": {
-                                "kind": "search",
+                                "kind": "tool_call",
                                 "label": f"Tool: {label_name}",
-                                "detail": json.dumps(tinput)[:80] if tinput else "",
+                                "detail": json.dumps(tinput)[:120] if tinput else "",
+                                "tool_input": json.dumps(tinput) if tinput else "",
                                 "done": False,
                             },
                         }
@@ -756,9 +759,10 @@ async def chat_stream(
                         yield {
                             "type": "step",
                             "step": {
-                                "kind": "search",
+                                "kind": "tool_call",
                                 "label": f"Tool: {label_name}",
-                                "detail": f"{len(result)} bytes",
+                                "detail": result[:200] if result else "done",
+                                "tool_result": result[:2000] if result else "",
                                 "done": True,
                             },
                         }
@@ -860,9 +864,10 @@ async def chat_stream(
                         yield {
                             "type": "step",
                             "step": {
-                                "kind": "search",
+                                "kind": "tool_call",
                                 "label": f"Tool: {label_name}",
-                                "detail": json.dumps(tinput)[:80] if tinput else "",
+                                "detail": json.dumps(tinput)[:120] if tinput else "",
+                                "tool_input": json.dumps(tinput) if tinput else "",
                                 "done": False,
                             },
                         }
@@ -880,9 +885,10 @@ async def chat_stream(
                         yield {
                             "type": "step",
                             "step": {
-                                "kind": "search",
+                                "kind": "tool_call",
                                 "label": f"Tool: {label_name}",
-                                "detail": f"{len(result)} bytes",
+                                "detail": result[:200] if result else "done",
+                                "tool_result": result[:2000] if result else "",
                                 "done": True,
                             },
                         }

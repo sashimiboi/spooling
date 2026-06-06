@@ -377,6 +377,8 @@ export default function AnalyticsPage() {
                   rowHeight={34}
                   suppressMovableColumns
                   defaultColDef={{ flex: 1, minWidth: 80, resizable: true }}
+                  enableCellTextSelection
+                  ensureDomOrder
                 />
               </div>
             </CardContent>
@@ -446,6 +448,8 @@ export default function AnalyticsPage() {
               paginationPageSizeSelector={[15, 30, 50]}
               suppressMovableColumns
               defaultColDef={{ flex: 1, minWidth: 80, resizable: true, sortable: true }}
+              enableCellTextSelection
+              ensureDomOrder
             />
           </div>
         </CardContent>

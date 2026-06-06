@@ -897,6 +897,8 @@ export default function SessionsPage() {
           defaultColDef={AG_GRID_DEFAULT_COL_DEF}
           onRowClicked={(e) => e.data && openSession(e.data.id)}
           rowClass="cursor-pointer"
+          enableCellTextSelection
+          ensureDomOrder
           overlayNoRowsTemplate='<span style="color: hsl(var(--muted-foreground))">No sessions match your filters.</span>'
         />
       </div>
