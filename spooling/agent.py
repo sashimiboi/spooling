@@ -94,7 +94,7 @@ MCP_TOOL_PREFIX = "mcp__"
 
 
 def make_qualified_tool_name(slug: str, tool_name: str) -> str:
-    import asyncio
+    import re
 
     safe_slug = re.sub(r'[^a-zA-Z0-9_-]', '_', slug) if slug else "connector"
     prefix = f"{MCP_TOOL_PREFIX}{safe_slug}__"
