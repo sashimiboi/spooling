@@ -22,11 +22,12 @@ interface ChatSessionMeta { id: string; title: string; created_at: string; updat
 interface ConnectorInfo { id: string; slug: string; name: string; url: string; transport: string; status: string; last_error: string | null; has_auth: boolean; tool_count: number; tools_json: Array<{ name: string; description: string }>; }
 
 const BUILT_IN_TOOLS: Array<{ name: string; desc: string }> = [
-  { name: "spool_search", desc: "Ranked message excerpts for a query." },
-  { name: "spool_recent_sessions", desc: "Newest sessions, optionally filtered by provider / days." },
-  { name: "spool_get_session", desc: "Full session metadata + ordered messages." },
-  { name: "spool_workspace_stats", desc: "Counts, cost, per-provider rollup." },
-  { name: "spool_top_projects", desc: "Projects by spend + volume." },
+  { name: "spooling_search", desc: "Ranked message excerpts for a query." },
+  { name: "spooling_recent_sessions", desc: "Newest sessions, optionally filtered by provider / days." },
+  { name: "spooling_get_session", desc: "Full session metadata + ordered messages." },
+  { name: "spooling_workspace_stats", desc: "Counts, cost, per-provider rollup." },
+  { name: "spooling_top_projects", desc: "Projects by spend + volume." },
+  { name: "spooling_semantic_search", desc: "Semantic / vector search over session messages using pgvector." },
 ];
 
 export default function ChatPage() {

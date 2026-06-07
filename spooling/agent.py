@@ -35,7 +35,7 @@ TOOL_LOOP_MAX = 4
 
 SESSION_TOOLS = [
     {
-        "name": "spool_search",
+        "name": "spooling_search",
         "description": "Ranked message excerpts for a query.",
         "input_schema": {
             "type": "object",
@@ -47,7 +47,7 @@ SESSION_TOOLS = [
         },
     },
     {
-        "name": "spool_recent_sessions",
+        "name": "spooling_recent_sessions",
         "description": "Newest sessions, optionally filtered by provider / days.",
         "input_schema": {
             "type": "object",
@@ -59,7 +59,7 @@ SESSION_TOOLS = [
         },
     },
     {
-        "name": "spool_get_session",
+        "name": "spooling_get_session",
         "description": "Full session metadata + ordered messages.",
         "input_schema": {
             "type": "object",
@@ -71,7 +71,7 @@ SESSION_TOOLS = [
         },
     },
     {
-        "name": "spool_workspace_stats",
+        "name": "spooling_workspace_stats",
         "description": "Counts, cost, per-provider rollup.",
         "input_schema": {
             "type": "object",
@@ -79,13 +79,27 @@ SESSION_TOOLS = [
         },
     },
     {
-        "name": "spool_top_projects",
+        "name": "spooling_top_projects",
         "description": "Projects by spend + volume.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "limit": {"type": "number", "description": "Max projects (1-25, default 8)."},
             },
+        },
+    },
+    {
+        "name": "spooling_semantic_search",
+        "description": "Semantic / vector search over session messages using pgvector. Finds conceptually related content even when keywords don't match.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Natural-language query."},
+                "limit": {"type": "number", "description": "Max results (1-30, default 10)."},
+                "project": {"type": "string", "description": "Optional project filter."},
+                "threshold": {"type": "number", "description": "Minimum similarity score 0-1 (default 0.25)."},
+            },
+            "required": ["query"],
         },
     },
 ]
@@ -271,7 +285,7 @@ async def execute_builtin_tool(name: str, args: dict) -> str:
     conn = get_connection()
     try:
         match name:
-            case "spool_search":
+            case "spooling_search":
                 q = str(args.get("query", ""))[:500]
                 if not q:
                     return json.dumps({"error": "query required"})
@@ -290,7 +304,7 @@ async def execute_builtin_tool(name: str, args: dict) -> str:
                     for r in results
                 ])
 
-            case "spool_recent_sessions":
+            case "spooling_recent_sessions":
                 limit = _clamp(args.get("limit"), 10, 1, 50)
                 provider = args.get("provider")
                 days = args.get("days")
@@ -310,7 +324,7 @@ async def execute_builtin_tool(name: str, args: dict) -> str:
                 ).fetchall()
                 return json.dumps([dict(r) for r in rows])
 
-            case "spool_get_session":
+            case "spooling_get_session":
                 sid = str(args.get("session_id", ""))
                 if not sid:
                     return json.dumps({"error": "session_id required"})
@@ -333,7 +347,7 @@ async def execute_builtin_tool(name: str, args: dict) -> str:
                     "truncated": len(msgs) >= cap,
                 })
 
-            case "spool_workspace_stats":
+            case "spooling_workspace_stats":
                 summary = conn.execute(
                     """SELECT COUNT(*)::int AS sessions,
                               COALESCE(SUM(message_count), 0)::int AS messages,
@@ -357,7 +371,7 @@ async def execute_builtin_tool(name: str, args: dict) -> str:
                     "per_provider": [dict(r) for r in providers],
                 })
 
-            case "spool_top_projects":
+            case "spooling_top_projects":
                 limit = _clamp(args.get("limit"), 8, 1, 25)
                 rows = conn.execute(
                     """SELECT project, COUNT(*)::int AS sessions,
@@ -368,6 +382,27 @@ async def execute_builtin_tool(name: str, args: dict) -> str:
                     (limit,),
                 ).fetchall()
                 return json.dumps([dict(r) for r in rows])
+
+            case "spooling_semantic_search":
+                q = str(args.get("query", ""))[:500]
+                if not q:
+                    return json.dumps({"error": "query required"})
+                limit = _clamp(args.get("limit"), 10, 1, 30)
+                project = args.get("project")
+                threshold = float(args.get("threshold") or 0.25)
+                results = semantic_search(q, limit=limit, project=project)
+                return json.dumps([
+                    {
+                        "session_id": r["session_id"],
+                        "role": r.get("role"),
+                        "project": r.get("project"),
+                        "title": r.get("title"),
+                        "timestamp": r.get("timestamp"),
+                        "score": r.get("similarity"),
+                        "content": (r.get("content") or "")[:500],
+                    }
+                    for r in results
+                ])
 
             case _:
                 return json.dumps({"error": "unknown_tool", "name": name})
