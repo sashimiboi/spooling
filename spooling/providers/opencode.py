@@ -30,7 +30,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from spooling.config import OPENCODE_DB
-from spooling.parser import ParsedMessage, ParsedSession, ToolCallDetail, _summarize_tool_input
+from spooling.parser import (
+    ParsedMessage,
+    ParsedSession,
+    ToolCallDetail,
+    _format_edit_diff,
+    _summarize_tool_input,
+)
 from spooling.providers.base import Provider
 from spooling.tracing import build_flat_trace_from_messages
 
@@ -129,11 +135,17 @@ def _build_message(
             output = state.get("output") or p.get("output") or p.get("result")
 
             input_summary = ""
+            tool_input_raw = None
             if isinstance(inp, dict) and inp:
                 input_summary = _summarize_tool_input(name, inp)
+                tool_input_raw = inp
 
             result_preview = ""
-            if output is not None:
+            if name == "Edit" and isinstance(inp, dict):
+                result_preview = _format_edit_diff(inp)
+            elif name == "Write" and isinstance(inp, dict):
+                result_preview = (inp.get("content") or "")[:2000]
+            elif output is not None:
                 if isinstance(output, (dict, list)):
                     try:
                         result_preview = json.dumps(output)[:500]
@@ -147,6 +159,7 @@ def _build_message(
                 name=name,
                 input_summary=input_summary,
                 result_preview=result_preview,
+                tool_input_raw=tool_input_raw,
             ))
             text_chunks.append(f"[tool: {name}]")
             if call_id and result_preview:

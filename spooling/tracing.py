@@ -399,12 +399,13 @@ def build_flat_trace_from_messages(
 
             for tool_name in getattr(m, "tools_used", []) or []:
                 td = td_by_name.get(tool_name)
+                raw_input = td.tool_input_raw if td else None
                 tool_span = tb.start_tool(
                     parent=root,
                     name=f"tool:{tool_name}",
                     tool_name=tool_name,
                     started_at=ts,
-                    tool_input={"summary": td.input_summary} if td and td.input_summary else None,
+                    tool_input=raw_input or ({"summary": td.input_summary} if td and td.input_summary else None),
                 )
                 tb.end_span(
                     tool_span,

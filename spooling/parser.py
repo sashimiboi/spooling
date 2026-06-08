@@ -36,6 +36,7 @@ class ToolCallDetail:
     name: str
     input_summary: str
     result_preview: str = ""
+    tool_input_raw: dict | None = None
 
 
 @dataclass

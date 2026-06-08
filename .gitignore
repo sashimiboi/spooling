@@ -8,6 +8,7 @@ build/
 ui/node_modules/
 ui/.next/
 .env
+spooling.db
 
 # x402 paid endpoints — out of OSS scope
 spooling/paid.py
