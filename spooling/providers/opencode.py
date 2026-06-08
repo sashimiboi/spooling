@@ -88,6 +88,19 @@ def _tool_name_from_part(part_type: str, data: dict) -> str:
     return data.get("toolName") or data.get("name") or data.get("tool") or "tool"
 
 
+_CAMEL_TO_SNAKE = {"filePath": "file_path", "oldString": "old_string", "newString": "new_string"}
+
+def _normalize_tool_input(name: str, inp: dict) -> dict:
+    """Normalize opencode's camelCase input keys to snake_case for
+    the JSONL-parser utility functions (``_summarize_tool_input``,
+    ``_format_edit_diff``)."""
+    if not isinstance(inp, dict):
+        return inp
+    if name not in ("Edit", "Write"):
+        return inp
+    return {_CAMEL_TO_SNAKE.get(k, k): v for k, v in inp.items()}
+
+
 def _build_message(
     message_id: str,
     session_id: str,
@@ -128,7 +141,8 @@ def _build_message(
             continue
 
         if _part_is_tool(ptype):
-            name = _tool_name_from_part(ptype, p)
+            raw_name = _tool_name_from_part(ptype, p)
+            name = raw_name[0].upper() + raw_name[1:] if raw_name else raw_name
             state = p.get("state") or {}
             inp = state.get("input") or p.get("input") or p.get("args") or {}
             call_id = p.get("toolCallId") or p.get("id") or p.get("tool_use_id") or p.get("callID") or ""
@@ -136,13 +150,14 @@ def _build_message(
 
             input_summary = ""
             tool_input_raw = None
+            norm_inp = _normalize_tool_input(name, inp) if isinstance(inp, dict) else inp
             if isinstance(inp, dict) and inp:
-                input_summary = _summarize_tool_input(name, inp)
+                input_summary = _summarize_tool_input(name, norm_inp)
                 tool_input_raw = inp
 
             result_preview = ""
             if name == "Edit" and isinstance(inp, dict):
-                result_preview = _format_edit_diff(inp)
+                result_preview = _format_edit_diff(norm_inp)
             elif name == "Write" and isinstance(inp, dict):
                 result_preview = (inp.get("content") or "")[:2000]
             elif output is not None:
