@@ -43,6 +43,12 @@ async def api_provider_breakdown():
     return get_provider_breakdown()
 
 
+@app.get("/api/stats/models")
+async def api_model_breakdown(days: int | None = Query(default=None)):
+    from spooling.stats import get_cost_by_model
+    return get_cost_by_model(days=days)
+
+
 @app.get("/api/sessions")
 async def api_sessions(limit: int = Query(default=50), provider: str | None = Query(default=None)):
     conn = get_connection()
@@ -71,6 +77,16 @@ async def api_session(session_id: str):
     detail = get_session_detail(session_id)
     if not detail:
         return {"error": "Session not found"}
+    # Enrich with per-model cost from the trace if available.
+    conn = get_connection()
+    try:
+        trace_row = conn.execute(
+            "SELECT id FROM traces WHERE session_id = %s", (session_id,)
+        ).fetchone()
+        if trace_row:
+            detail["per_model_cost"] = _model_cost_breakdown(trace_row["id"])
+    finally:
+        conn.close()
     return detail
 
 
@@ -419,6 +435,9 @@ async def api_trace_detail(trace_id: str):
     trace_dict = dict(trace)
     breakdown = _breakdown_cost_for_trace(trace_dict)
     trace_dict["cost_breakdown"] = breakdown
+
+    model_breakdown = _model_cost_breakdown(trace["id"])
+    trace_dict["per_model_cost"] = model_breakdown
     # Recompute total_cost_usd from the live breakdown so the header number
     # stays in sync with the tooltip components even when rows were ingested
     # under an older pricing formula.
@@ -462,6 +481,42 @@ def _breakdown_cost_for_trace(trace: dict) -> dict:
         "cache_write_tokens": cw,
         "model": model or None,
     }
+
+
+def _model_cost_breakdown(trace_id: str) -> dict:
+    """Aggregate llm_call span cost by model for a given trace."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT model,
+                      COUNT(*) AS calls,
+                      COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                      COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                      COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                      COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+                      COALESCE(SUM(cost_usd), 0) AS cost
+               FROM spans
+               WHERE trace_id = %s AND kind = 'llm_call' AND model IS NOT NULL
+               GROUP BY model
+               ORDER BY cost DESC""",
+            (trace_id,),
+        ).fetchall()
+        return {
+            "models": [
+                {
+                    "model": r["model"],
+                    "calls": r["calls"],
+                    "input_tokens": r["input_tokens"],
+                    "output_tokens": r["output_tokens"],
+                    "cache_read_tokens": r["cache_read_tokens"],
+                    "cache_write_tokens": r["cache_write_tokens"],
+                    "cost": round(float(r["cost"]), 6),
+                }
+                for r in rows
+            ],
+        }
+    finally:
+        conn.close()
 
 
 @app.get("/api/session/{session_id}/trace")

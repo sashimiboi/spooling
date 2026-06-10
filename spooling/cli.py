@@ -374,6 +374,242 @@ def experiment_show(run_id):
 
 
 @cli.group()
+def cost():
+    """Show cost details and track spending in $."""
+    pass
+
+
+@cost.command("overview")
+@click.option("--provider", "-p", default=None, help="Filter by provider id")
+@click.option("--days", type=int, default=None, help="Only look at the last N days")
+def cost_overview(provider, days):
+    """Aggregate cost broken down by input/output/cache."""
+    from spooling.stats import get_cost_summary
+
+    c = get_cost_summary(provider=provider, days=days)
+    total_tokens = c["input_tokens"] + c["output_tokens"]
+
+    console.print(Panel(
+        f"Total cost:  [bold]${c['cost_usd']:.2f}[/bold]\n"
+        f"Input tokens:  {c['input_tokens']:,}\n"
+        f"Output tokens: {c['output_tokens']:,}\n"
+        f"Cache read:    {c['cache_read_tokens']:,}\n"
+        f"Cache write:   {c['cache_write_tokens']:,}\n"
+        f"Total tokens:  [bold]{total_tokens:,}[/bold]",
+        title="[bold]Cost Overview[/bold]",
+        style="green",
+    ))
+
+
+@cost.command("breakdown")
+@click.option("--days", type=int, default=None, help="Only look at the last N days")
+@click.option("--by", "group_by", type=click.Choice(["provider", "model", "project"]),
+              default="provider", help="Breakdown dimension")
+def cost_breakdown(days, group_by):
+    """Cost broken down by provider, model, or project."""
+    from spooling.stats import get_cost_by_provider, get_cost_by_model, get_cost_by_project
+
+    lookup = {
+        "provider": (get_cost_by_provider, "Provider"),
+        "model": (get_cost_by_model, "Model"),
+        "project": (get_cost_by_project, "Project"),
+    }
+    fn, label = lookup[group_by]
+    rows = fn(days=days)
+
+    if not rows:
+        console.print("[yellow]No cost data found.[/yellow]")
+        return
+
+    table = Table(title=f"Cost by {label}", show_lines=False)
+    table.add_column(label, style="cyan")
+    table.add_column("Sessions", justify="right")
+    table.add_column("In Tokens", justify="right")
+    table.add_column("Out Tokens", justify="right")
+    table.add_column("Cache R", justify="right")
+    table.add_column("Cache W", justify="right")
+    table.add_column("Cost", justify="right")
+
+    for r in rows:
+        name = r.get("provider_id") or r.get("model") or r.get("project") or "unknown"
+        if group_by == "project":
+            name = _clean_project(name)
+        table.add_row(
+            str(name)[:40],
+            str(r.get("sessions", r.get("traces", r.get("calls", 0)))),
+            f"{int(r.get('input_tokens', 0)):,}",
+            f"{int(r.get('output_tokens', 0)):,}",
+            f"{int(r.get('cache_read_tokens', 0)):,}",
+            f"{int(r.get('cache_write_tokens', 0)):,}",
+            f"${float(r.get('cost', 0)):.2f}",
+        )
+    console.print(table)
+
+
+@cost.command("daily")
+@click.option("--days", default=30, help="Number of days to show")
+@click.option("--provider", "-p", default=None, help="Filter by provider id")
+def cost_daily(days, provider):
+    """Daily cost trend."""
+    from spooling.stats import get_daily_stats
+    rows = get_daily_stats(days=days, provider=provider)
+
+    if not rows:
+        console.print("[yellow]No daily cost data.[/yellow]")
+        return
+
+    table = Table(title=f"Daily Cost (last {days} days)", show_lines=False)
+    table.add_column("Date", style="cyan")
+    table.add_column("Sessions", justify="right")
+    table.add_column("Tokens", justify="right")
+    table.add_column("Cost", justify="right")
+
+    for r in rows:
+        table.add_row(
+            str(r["day"]),
+            str(r["sessions"]),
+            f"{int(r.get('total_tokens', 0)):,}",
+            f"${float(r['cost']):.2f}",
+        )
+    console.print(table)
+
+
+@cost.command("monthly")
+@click.option("--months", default=12, help="Number of months to show")
+def cost_monthly(months):
+    """Monthly cost trend."""
+    from spooling.stats import get_monthly_cost
+    rows = get_monthly_cost(months=months)
+
+    if not rows:
+        console.print("[yellow]No monthly cost data.[/yellow]")
+        return
+
+    table = Table(title=f"Monthly Cost (last {months} months)", show_lines=False)
+    table.add_column("Month", style="cyan")
+    table.add_column("Sessions", justify="right")
+    table.add_column("Tokens", justify="right")
+    table.add_column("Cost", justify="right")
+
+    for r in rows:
+        month_str = r["month"].strftime("%Y-%m") if r["month"] else "unknown"
+        table.add_row(
+            month_str,
+            str(r["sessions"]),
+            f"{int(r.get('total_tokens', 0)):,}",
+            f"${float(r['cost']):.2f}",
+        )
+    console.print(table)
+
+
+@cost.command("session")
+@click.argument("session_id")
+def cost_session(session_id):
+    """Detailed cost breakdown for a single session."""
+    from spooling.stats import get_session_cost_detail
+
+    detail = get_session_cost_detail(session_id)
+    if not detail:
+        console.print(f"[yellow]Session not found: {session_id}[/yellow]")
+        return
+
+    title = detail["title"] or "(no title)"
+    console.print(Panel(
+        f"Session:     [bold]{detail['session_id'][:12]}...[/bold]\n"
+        f"Provider:    {detail['provider_id']}\n"
+        f"Project:     {detail['project'] or '—'}\n"
+        f"Model:       {detail['model'] or '—'}\n"
+        f"Messages:    {detail['message_count']}\n"
+        f"Tool calls:  {detail['tool_call_count']}\n"
+        f"Input tokens:  {detail['tokens']['input']:,}\n"
+        f"Output tokens: {detail['tokens']['output']:,}\n"
+        f"Cache read:    {detail['tokens']['cache_read']:,}\n"
+        f"Cache write:   {detail['tokens']['cache_write']:,}\n"
+        f"Cost:        [bold]${detail['cost_usd']:.4f}[/bold]",
+        title=f"[bold]Session Cost[/bold] — {title[:60]}",
+        style="green",
+    ))
+
+    if detail["per_model"]:
+        table = Table(title="Per-model cost breakdown", show_lines=False)
+        table.add_column("Model", style="cyan")
+        table.add_column("Cost", justify="right")
+        for model_name, model_cost in sorted(detail["per_model"].items(),
+                                              key=lambda x: x[1], reverse=True):
+            table.add_row(model_name, f"${model_cost:.4f}")
+        console.print(table)
+
+    if detail["llm_calls"]:
+        table = Table(title="LLM call details", show_lines=False)
+        table.add_column("#", justify="right")
+        table.add_column("Model")
+        table.add_column("In", justify="right")
+        table.add_column("Out", justify="right")
+        table.add_column("CR", justify="right")
+        table.add_column("CW", justify="right")
+        table.add_column("Cost", justify="right")
+        for i, sp in enumerate(detail["llm_calls"], 1):
+            table.add_row(
+                str(i),
+                sp["model"] or "—",
+                str(sp["input_tokens"]),
+                str(sp["output_tokens"]),
+                str(sp["cache_read_tokens"]),
+                str(sp["cache_write_tokens"]),
+                f"${float(sp['cost_usd'] or 0):.4f}",
+            )
+        console.print(table)
+
+
+@cost.command("recalc")
+@click.option("--session", "session_id", default=None, help="Single session id to recalc")
+@click.option("--provider", "-p", default=None, help="Recalc all sessions for a provider")
+@click.option("--apply", "do_apply", is_flag=True, default=False,
+              help="Actually update rows (default is dry-run)")
+def cost_recalc(session_id, provider, do_apply):
+    """Re-price sessions/traces against the current LiteLLM rate table.
+
+    Defaults to dry-run (no writes). Pass --apply to persist changes.
+    """
+    from spooling.stats import recalc_cost
+    result = recalc_cost(session_id=session_id, provider=provider, dry_run=not do_apply)
+
+    if do_apply:
+        console.print(f"[green]Applied[/green] — {result['sessions_changed']} sessions + "
+                      f"{result['traces_changed']} traces updated.")
+    else:
+        console.print(f"[yellow]Dry-run[/yellow] — pass [bold]--apply[/bold] to persist changes.")
+
+    console.print(Panel(
+        f"Sessions reviewed: {result['sessions_reviewed']}\n"
+        f"Traces reviewed:   {result['traces_reviewed']}\n"
+        f"Sessions changed:  {result['sessions_changed']}\n"
+        f"Traces changed:    {result['traces_changed']}\n"
+        f"Total old cost:    ${result['total_old_cost']:.4f}\n"
+        f"Total new cost:    ${result['total_new_cost']:.4f}\n"
+        f"Difference:        [bold]${result['total_diff']:.4f}[/bold]",
+        title="[bold]Recalc Summary[/bold]",
+        style="green" if abs(result['total_diff']) < 0.01 else "yellow",
+    ))
+
+    if result["changes"]:
+        table = Table(title="Changes (first 50)", show_lines=False)
+        table.add_column("Session", style="cyan")
+        table.add_column("Old $", justify="right")
+        table.add_column("New $", justify="right")
+        table.add_column("Diff", justify="right")
+        for ch in result["changes"][:50]:
+            sid = (ch.get("session_id") or "")[:12]
+            table.add_row(
+                sid,
+                f"${ch['old_cost']:.4f}",
+                f"${ch['new_cost']:.4f}",
+                f"[{'green' if ch['diff'] >= 0 else 'red'}]{ch['diff']:+.4f}[/{'green' if ch['diff'] >= 0 else 'red'}]",
+            )
+        console.print(table)
+
+
+@cli.group()
 def pricing():
     """Manage the LiteLLM-backed model pricing table."""
     pass
