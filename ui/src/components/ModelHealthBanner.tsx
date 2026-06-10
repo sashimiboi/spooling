@@ -63,8 +63,8 @@ function deriveIssues(a: AgentStatus): Issue[] {
     issues.push({
       id: 'mcp-down',
       severity: 'warning',
-      title: 'Spool MCP server is not reachable',
-      detail: 'External agents will not be able to query Spool as an MCP context source.',
+      title: 'Spooling MCP server is not reachable',
+      detail: 'External agents will not be able to query Spooling as an MCP context source.',
       fix: { label: 'Start MCP server', command: 'spooling mcp' },
     });
   }
@@ -114,7 +114,7 @@ export default function ModelHealthBanner() {
         {
           id: 'api-down',
           severity: 'error',
-          title: 'Cannot reach the Spool API',
+          title: 'Cannot reach the Spooling API',
           detail: 'The API server on :3002 is not responding. Settings, chat, and evals will not work.',
           fix: { label: 'Start Spooling', command: 'spooling ui' },
         },

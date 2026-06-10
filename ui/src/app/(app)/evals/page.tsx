@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { Suspense, useEffect, useState, useCallback, useMemo } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FilterSelect, type FilterOption } from '@/components/ui/filter-select';
-import { CheckCircle2, XCircle, AlertCircle, Play, ClipboardList, Calendar } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertCircle, Play, ClipboardList, Calendar, Scale, Check, Server } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { fetchApi, postApi, formatDate, cleanProject } from '@/lib/api';
 import { useSearchParams } from 'next/navigation';
@@ -58,7 +58,15 @@ function StatusIcon({ passed }: { passed: boolean | null }) {
   return <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />;
 }
 
-export default function EvalsPage() {
+export default function EvalsPageWrapper() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-6 w-6 border-2 border-primary border-t-transparent" /></div>}>
+      <EvalsPage />
+    </Suspense>
+  );
+}
+
+function EvalsPage() {
   const [loading, setLoading] = useState(true);
   const [rubrics, setRubrics] = useState<Rubric[]>([]);
   const [evals, setEvals] = useState<EvalRow[]>([]);
@@ -67,6 +75,10 @@ export default function EvalsPage() {
   const [runningBulk, setRunningBulk] = useState<string | null>(null);
   const [bulkWindow, setBulkWindow] = useState<Window>('7d');
   const [lastRun, setLastRun] = useState<string | null>(null);
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [judgeModel, setJudgeModel] = useState('qwen2.5:7b');
+  const [judgeConnected, setJudgeConnected] = useState(false);
+  const [savingJudge, setSavingJudge] = useState(false);
 
   // List filters (separate from the bulk-run window)
   const [search, setSearch] = useState('');
@@ -90,15 +102,21 @@ export default function EvalsPage() {
       if (passFilter === 'passed') params.set('passed', 'true');
       else if (passFilter === 'failed') params.set('passed', 'false');
       else if (passFilter === 'null') params.set('passed', 'null');
-      const [rbs, evs] = await Promise.all([
+      const [rbs, evs, agents] = await Promise.all([
         fetchApi('/api/evals/rubrics'),
         fetchApi(`/api/evals?${params.toString()}`),
+        fetchApi('/api/settings/agents'),
       ]);
       setRubrics(rbs);
       const rows = Array.isArray(evs) ? evs : (evs?.rows || []);
       const total = Array.isArray(evs) ? evs.length : (evs?.total ?? rows.length);
       setEvals(rows);
       setTotalEvals(total);
+      if (agents) {
+        setJudgeModel(agents.judge?.model || 'qwen2.5:7b');
+        setJudgeConnected(agents.judge?.connected || false);
+        setOllamaModels(agents.ollama?.models || []);
+      }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, [listWindow, providerFilter, passFilter]);
@@ -153,6 +171,28 @@ export default function EvalsPage() {
       .map(([project, n]) => ({ project, count: n }));
   }, [evals]);
 
+  const OLLAMA_TOOL_MODELS = [
+    'qwen2.5', 'llama3.1', 'llama3.2', 'llama3.3',
+    'mistral', 'mixtral', 'phi-3', 'phi-4',
+    'gemma3', 'command-r', 'deepseek-v2', 'deepseek-r1',
+    'nemotron', 'llama3-groq-tool-use', 'hermes3',
+  ];
+
+  function isToolCapable(name: string): boolean {
+    const base = name.split(':')[0].toLowerCase().replace(/-coder$/, '');
+    return OLLAMA_TOOL_MODELS.some(p => base.startsWith(p));
+  }
+
+  const saveJudgeModel = async (model: string) => {
+    setSavingJudge(true);
+    try {
+      await postApi('/api/settings', { judge_model: model });
+      setJudgeModel(model);
+      setJudgeConnected(ollamaModels.includes(model));
+    } catch (e) { console.error(e); }
+    finally { setSavingJudge(false); }
+  };
+
   const filteredEvals = useMemo(() => {
     const q = search.trim().toLowerCase();
     return evals.filter((e) => {
@@ -182,6 +222,45 @@ export default function EvalsPage() {
           {rubrics.length} rubrics · {evals.length} runs
         </span>
       </div>
+
+      {/* Judge model selector */}
+      <Card>
+        <CardContent className="p-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2 shrink-0">
+              <Scale className={cn('h-4 w-4', judgeConnected ? 'text-emerald-500' : 'text-amber-500')} />
+              <span className="text-[13px] font-medium">Judge model</span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <select
+                value={judgeModel}
+                onChange={(e) => saveJudgeModel(e.target.value)}
+                disabled={savingJudge}
+                className="h-8 text-[12px] rounded-md border bg-card px-2.5 py-1 max-w-[300px] w-full"
+              >
+                {ollamaModels.length === 0 && (
+                  <option value={judgeModel}>{judgeModel}</option>
+                )}
+                {ollamaModels.map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              {savingJudge ? (
+                <span className="animate-pulse">Saving...</span>
+              ) : (
+                <Badge variant={judgeConnected ? 'success' : 'destructive'} className="text-[10px]">
+                  {judgeConnected ? 'Available' : 'Not installed'}
+                </Badge>
+              )}
+              <span className="hidden sm:inline">
+                {isToolCapable(judgeModel) ? '(tool-capable)' : '(no tool support — some rubrics may fail)'}
+              </span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Overview grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">

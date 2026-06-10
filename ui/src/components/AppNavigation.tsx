@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 
 function SpoolLogo({ className }: { className?: string }) {
-  return <img src="/logo.svg" alt="Spool" className={className} />;
+  return <img src="/logo.svg" alt="Spooling" className={className} />;
 }
 
 interface NavItem {
@@ -82,7 +82,7 @@ export default function AppNavigation({ collapsed, onToggle }: Props) {
           <div className="flex items-center gap-2.5 flex-1 pl-1">
             <SpoolLogo className="h-8 w-8 text-foreground" />
             <span className="text-[18px] font-semibold text-foreground tracking-tight">
-              Spool
+              Spooling
             </span>
           </div>
         ) : (

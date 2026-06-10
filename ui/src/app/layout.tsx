@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { ThemeProvider } from '@/components/ThemeProvider';
 
 export const metadata: Metadata = {
-  title: 'Spool - Session Tracker',
+  title: 'Spooling - Session Tracker',
   description: 'Local session tracker for AI coding assistants',
   icons: { icon: '/logo.svg' },
 };

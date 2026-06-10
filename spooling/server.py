@@ -1030,6 +1030,7 @@ async def api_delete_chat_session(session_id: str):
 class SettingsUpdate(BaseModel):
     provider: str | None = None
     model: str | None = None
+    judge_model: str | None = None
     anthropic_api_key: str | None = None
     ollama_url: str | None = None
     openai_base_url: str | None = None
@@ -1081,6 +1082,8 @@ async def api_update_settings(body: SettingsUpdate):
         config["provider"] = body.provider
     if body.model is not None:
         config["model"] = body.model
+    if body.judge_model is not None:
+        config["judge_model"] = body.judge_model
     if body.anthropic_api_key is not None:
         config["anthropic_api_key"] = body.anthropic_api_key
     if body.ollama_url is not None:
