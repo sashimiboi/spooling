@@ -93,6 +93,7 @@ async def api_session(session_id: str):
 # --- Search ---
 
 @app.get("/api/search")
+@app.get("/api/v1/search")
 async def api_search(
     q: str = Query(...),
     limit: int = Query(default=10),

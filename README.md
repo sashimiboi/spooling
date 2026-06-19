@@ -248,6 +248,22 @@ What it does each cycle:
 Cycles with no new work are silent. If a push fails the watermark is
 not advanced, so the next cycle retries the same window.
 
+### Cloud API endpoints (programmatic access)
+
+The cloud API at `api.spooling.ai` uses `/v1/` endpoints. Requests require a Bearer token via the `Authorization` header:
+
+```bash
+# Stats
+curl -s "https://api.spooling.ai/v1/stats" \
+  -H "Authorization: Bearer $SPOOLING_KEY"
+
+# Search (when deployed — falls back to local search on self-hosted)
+curl -s "https://api.spooling.ai/api/search?q=migration&limit=10" \
+  -H "Authorization: Bearer $SPOOLING_KEY"
+```
+
+**Important**: `app.spooling.ai` is the Next.js frontend. For API access, use `api.spooling.ai` directly or set `API_URL=https://api.spooling.ai` when deploying the frontend so its `/api/*` rewrites reach the backend.
+
 ### Status / logout
 
 ```bash
@@ -455,6 +471,7 @@ All optional - defaults work out of the box for local development.
 | `SPOOLING_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Sentence transformer model |
 | `SPOOLING_UI_HOST` | `127.0.0.1` | API server host |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key (alternative to setting in UI) |
+| `API_URL` | `http://127.0.0.1:3002` | Backend API URL for Next.js rewrites (`/api/*`→`<API_URL>/api/*`). Set to `https://api.spooling.ai` in production. |
 
 ---
 
