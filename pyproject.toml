@@ -1,6 +1,6 @@
 [project]
 name = "spooling"
-version = "0.1.4"
+version = "0.1.5"
 description = "Local session tracker and semantic search for AI coding assistants"
 readme = "README.md"
 license = "MIT"
