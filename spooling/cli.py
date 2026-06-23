@@ -130,6 +130,9 @@ def stats(week, days, cloud_mode):
             return
         console.print(Panel(
             f"Sessions: [bold]{data.get('sessions', 0)}[/bold]  |  "
+            f"Messages: [bold]{data.get('messages', 0)}[/bold]  |  "
+            f"Tokens: [bold]{data.get('tokens', 0):,}[/bold]  |  "
+            f"Providers: [bold]{data.get('providers', 0)}[/bold]\n"
             f"Cost: [bold]${float(data.get('cost', 0)):.2f}[/bold] est.",
             title="[bold]Spooling Cloud Overview[/bold]",
             style="cyan",
