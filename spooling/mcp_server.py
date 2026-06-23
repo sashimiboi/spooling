@@ -15,15 +15,19 @@ Tools exposed:
   - list_evals(rubric_id, limit)
   - run_eval(rubric_id, trace_id)
 
-The server is read-mostly: `run_eval` is the only mutation, and it writes
-to the same evals table the GUI reads from.
+When the local DB returns no results, the server automatically falls back
+to the Spooling Cloud API (if configured via ``spooling cloud login``), so
+you can discover sessions from teammates or other machines in the same
+workspace.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Optional
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 
 from spooling.db import get_connection
@@ -33,6 +37,79 @@ MCP_HOST = "127.0.0.1"
 MCP_PORT = 3004
 MCP_PATH = "/mcp"
 MCP_URL = f"http://{MCP_HOST}:{MCP_PORT}{MCP_PATH}"
+
+# --- Mode: hybrid / local / cloud -------------------------------------------
+
+_MCP_MODE: str = "hybrid"
+
+
+def set_mode(mode: str) -> None:
+    """Set the MCP data-source mode.
+
+    ``"hybrid"`` (default) — local DB, fall back to cloud when empty.
+    ``"local"`` — local DB only, never call cloud API.
+    ``"cloud"`` — cloud only, skip local DB entirely.
+    """
+    global _MCP_MODE
+    _MCP_MODE = mode
+
+
+def _use_cloud() -> bool:
+    """Whether the current mode allows cloud API calls."""
+    return _MCP_MODE in ("hybrid", "cloud")
+
+
+def _use_local() -> bool:
+    """Whether the current mode queries the local DB first."""
+    return _MCP_MODE in ("hybrid", "local")
+
+
+# --- Cloud proxy helpers ----------------------------------------------------
+
+_CLOUD_CONFIG_PATH = Path.home() / ".config" / "spooling" / "cloud.json"
+_CLOUD_DEFAULT_API = "https://api.spooling.ai"
+
+
+def _cloud_config() -> dict:
+    try:
+        return json.loads(_CLOUD_CONFIG_PATH.read_text())
+    except Exception:
+        return {}
+
+
+def _cloud_headers() -> dict | None:
+    cfg = _cloud_config()
+    key = cfg.get("api_key")
+    if not key:
+        return None
+    return {"Authorization": f"Bearer {key}"}
+
+
+def _cloud_base() -> str:
+    cfg = _cloud_config()
+    return cfg.get("api_url") or _CLOUD_DEFAULT_API
+
+
+def _cloud_available() -> bool:
+    return _cloud_headers() is not None
+
+
+def _cloud_get(path: str, params: dict | None = None) -> dict | None:
+    """Call a cloud API endpoint. Returns parsed JSON or None."""
+    headers = _cloud_headers()
+    if not headers:
+        return None
+    try:
+        r = httpx.get(
+            f"{_cloud_base()}{path}",
+            headers=headers,
+            params=params or {},
+            timeout=15,
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
 
 
 mcp = FastMCP(
@@ -71,12 +148,48 @@ def list_traces(
 ) -> list[dict]:
     """Recent Spooling traces. Use this to find recent sessions before drilling in.
 
+    Falls back to Spooling Cloud when the local DB is empty and a cloud
+    API key is configured.
+
     Args:
         limit: Max rows to return (default 25, capped at 200).
         provider: Filter to one provider id (jsonl-session, codex, cursor, copilot, windsurf, kiro, antigravity, gemini, opencode).
         project: Filter to sessions whose project name matches exactly.
     """
     limit = max(1, min(limit, 200))
+
+    if _use_cloud() and not _use_local():
+        # Cloud-only mode
+        cloud_params: dict = {"limit": limit}
+        if provider:
+            cloud_params["pushed_by"] = provider
+        if project:
+            cloud_params["project"] = project
+        data = _cloud_get("/v1/sessions", cloud_params)
+        if not data:
+            return []
+        sessions = data.get("sessions", [])
+        return [
+            {
+                "id": f"cloud-{s['id']}",
+                "session_id": s["id"],
+                "provider_id": s.get("provider_id", "cloud"),
+                "project": s.get("project"),
+                "title": s.get("title"),
+                "started_at": s.get("started_at"),
+                "duration_ms": None,
+                "span_count": 0,
+                "agent_count": 0,
+                "tool_count": 0,
+                "llm_count": 0,
+                "error_count": 0,
+                "total_cost_usd": s.get("estimated_cost_usd", 0),
+                "model": None,
+                "_source": "cloud",
+            }
+            for s in sessions
+        ]
+
     clauses = []
     params: list[Any] = []
     if provider:
@@ -100,7 +213,43 @@ def list_traces(
         ).fetchall()
     finally:
         conn.close()
-    return _rows(rows)
+
+    if rows:
+        return _rows(rows)
+
+    # Hybrid: fallback to cloud sessions if local is empty
+    if not _use_cloud() or not _cloud_available():
+        return []
+
+    cloud_params: dict = {"limit": limit}
+    if provider:
+        cloud_params["pushed_by"] = provider
+    if project:
+        cloud_params["project"] = project
+    data = _cloud_get("/v1/sessions", cloud_params)
+    if not data:
+        return []
+    sessions = data.get("sessions", [])
+    return [
+        {
+            "id": f"cloud-{s['id']}",
+            "session_id": s["id"],
+            "provider_id": s.get("provider_id", "cloud"),
+            "project": s.get("project"),
+            "title": s.get("title"),
+            "started_at": s.get("started_at"),
+            "duration_ms": None,
+            "span_count": 0,
+            "agent_count": 0,
+            "tool_count": 0,
+            "llm_count": 0,
+            "error_count": 0,
+            "total_cost_usd": s.get("estimated_cost_usd", 0),
+            "model": None,
+            "_source": "cloud",
+        }
+        for s in sessions
+    ]
 
 
 @mcp.tool()
@@ -150,19 +299,102 @@ def search_sessions(
 ) -> list[dict]:
     """Semantic search over Spooling's embedded session chunks. Returns ranked matches.
 
+    Falls back to Spooling Cloud ILIKE search when the local DB has no
+    embedded results and a cloud API key is configured. Cloud results
+    include a ``_source: "cloud"`` field.
+
     Args:
         query: Natural-language description of what to find.
         limit: Max results (default 10, capped at 50).
         project: Optional project name filter.
     """
-    from spooling.search import search as do_search
     limit = max(1, min(limit, 50))
-    return do_search(query, limit=limit, project=project)
+
+    if _use_cloud() and not _use_local():
+        # Cloud-only mode
+        params: dict = {"q": query, "limit": limit}
+        if project:
+            params["project"] = project
+        data = _cloud_get("/v1/search", params)
+        if not data:
+            return []
+        sessions = data.get("sessions", [])
+        return [
+            {
+                "session_id": s["id"],
+                "provider_id": s.get("provider_id", "cloud"),
+                "project": s.get("project"),
+                "title": s.get("title"),
+                "content": f"{s.get('title') or '(untitled)'} — {s.get('project') or '?'}",
+                "similarity": 0.0,
+                "role": "system",
+                "timestamp": s.get("started_at"),
+                "_source": "cloud",
+            }
+            for s in sessions
+        ]
+
+    from spooling.search import search as do_search
+
+    local = do_search(query, limit=limit, project=project)
+    if local:
+        return local
+
+    # Hybrid: fallback to cloud ILIKE search
+    if not _use_cloud() or not _cloud_available():
+        return []
+
+    params: dict = {"q": query, "limit": limit}
+    if project:
+        params["project"] = project
+    data = _cloud_get("/v1/search", params)
+    if not data:
+        return []
+    sessions = data.get("sessions", [])
+    return [
+        {
+            "session_id": s["id"],
+            "provider_id": s.get("provider_id", "cloud"),
+            "project": s.get("project"),
+            "title": s.get("title"),
+            "content": f"{s.get('title') or '(untitled)'} — {s.get('project') or '?'}",
+            "similarity": 0.0,
+            "role": "system",
+            "timestamp": s.get("started_at"),
+            "_source": "cloud",
+        }
+        for s in sessions
+    ]
 
 
 @mcp.tool()
 def get_stats() -> dict:
-    """Top-line Spooling stats: total traces, spans, tools, llm calls, cost, errors."""
+    """Top-line Spooling stats: total traces, spans, tools, llm calls, cost, errors.
+
+    When the local DB is empty, falls back to Spooling Cloud stats if a
+    cloud API key is configured.
+    """
+    if _use_cloud() and not _use_local():
+        # Cloud-only mode
+        data = _cloud_get("/v1/stats")
+        if not data:
+            return {"summary": {}, "by_provider": []}
+        return {
+            "summary": {
+                "traces": data.get("sessions", 0),
+                "spans": 0,
+                "agents": 0,
+                "tools": 0,
+                "llm_calls": 0,
+                "errors": 0,
+                "input_tokens": int(data.get("tokens", 0)),
+                "output_tokens": 0,
+                "cost_usd": float(data.get("cost", 0)),
+            },
+            "by_provider": [{"provider_id": "cloud", "traces": data.get("sessions", 0), "cost_usd": float(data.get("cost", 0))}],
+            "_source": "cloud",
+        }
+
     conn = get_connection()
     try:
         row = conn.execute(
@@ -187,9 +419,35 @@ def get_stats() -> dict:
     finally:
         conn.close()
 
+    local_summary = _row(row) or {}
+    if local_summary.get("traces", 0) > 0:
+        return {
+            "summary": local_summary,
+            "by_provider": _rows(per_provider),
+        }
+
+    # Hybrid: fallback to cloud stats
+    if not _use_cloud() or not _cloud_available():
+        return {"summary": local_summary, "by_provider": []}
+
+    data = _cloud_get("/v1/stats")
+    if not data:
+        return {"summary": local_summary, "by_provider": []}
+
     return {
-        "summary": _row(row) or {},
-        "by_provider": _rows(per_provider),
+        "summary": {
+            "traces": data.get("sessions", 0),
+            "spans": 0,
+            "agents": 0,
+            "tools": 0,
+            "llm_calls": 0,
+            "errors": 0,
+            "input_tokens": int(data.get("tokens", 0)),
+            "output_tokens": 0,
+            "cost_usd": float(data.get("cost", 0)),
+        },
+        "by_provider": [{"provider_id": "cloud", "traces": data.get("sessions", 0), "cost_usd": float(data.get("cost", 0))}],
+        "_source": "cloud",
     }
 
 

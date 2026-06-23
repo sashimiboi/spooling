@@ -83,17 +83,22 @@ def watch():
 @click.argument("query")
 @click.option("-n", "--limit", default=10, help="Number of results")
 @click.option("-p", "--project", default=None, help="Filter by project")
-def search(query, limit, project):
+@click.option("--cloud", "cloud_mode", is_flag=True, help="Search cloud workspace instead of local DB")
+def search(query, limit, project, cloud_mode):
     """Semantic search across session history."""
-    from spooling.search import search as do_search
-
-    results = do_search(query, limit=limit, project=project)
+    if cloud_mode:
+        from spooling.cloud import cloud_search
+        results = cloud_search(query, limit=limit, project=project)
+    else:
+        from spooling.search import search as do_search
+        results = do_search(query, limit=limit, project=project)
 
     if not results:
         console.print("[yellow]No results found.[/yellow]")
         return
 
     for i, r in enumerate(results, 1):
+        source = r.get("_source", "local")
         similarity = f"{r['similarity']:.1%}"
         project_name = r["project"] or "unknown"
         role = r["role"]
@@ -104,6 +109,7 @@ def search(query, limit, project):
             f"[dim]{project_name}[/dim] "
             f"[{'green' if role == 'user' else 'blue'}]{role}[/{'green' if role == 'user' else 'blue'}] "
             f"[dim]{ts[:19]}[/dim]"
+            + (f" [cyan](cloud)[/cyan]" if source == "cloud" else "")
         )
         if r["title"]:
             console.print(f"   [dim]Session:[/dim] {r['title']}")
@@ -113,8 +119,23 @@ def search(query, limit, project):
 @cli.command()
 @click.option("--week", is_flag=True, help="Show weekly breakdown")
 @click.option("--days", default=7, help="Number of days for daily stats")
-def stats(week, days):
+@click.option("--cloud", "cloud_mode", is_flag=True, help="Show stats from cloud workspace")
+def stats(week, days, cloud_mode):
     """Show usage statistics."""
+    if cloud_mode:
+        from spooling.cloud import cloud_stats
+        data = cloud_stats()
+        if not data:
+            console.print("[yellow]No cloud stats available. Run 'spooling cloud login' first.[/yellow]")
+            return
+        console.print(Panel(
+            f"Sessions: [bold]{data.get('sessions', 0)}[/bold]  |  "
+            f"Cost: [bold]${float(data.get('cost', 0)):.2f}[/bold] est.",
+            title="[bold]Spooling Cloud Overview[/bold]",
+            style="cyan",
+        ))
+        return
+
     from spooling.stats import get_overview, get_daily_stats
 
     overview = get_overview()
@@ -659,21 +680,30 @@ def pricing_show(model):
 
 @cli.command()
 @click.option("--stdio", is_flag=True, help="Use stdio transport (default is streamable-HTTP)")
-def mcp(stdio):
+@click.option("--local", "local_mode", flag_value="local", default=True, help="Local DB only, no cloud fallback")
+@click.option("--cloud", "local_mode", flag_value="cloud", help="Cloud only, skip local DB")
+@click.option("--hybrid", "local_mode", flag_value="hybrid", help="Local DB with cloud fallback (default)")
+def mcp(stdio, local_mode):
     """Launch the Spooling MCP server.
 
     Defaults to streamable-HTTP at http://127.0.0.1:3004/mcp so any
     MCP-compatible agent (Codex, Cursor, web agents) can
     connect by URL. Pass --stdio for stdio-only clients.
+
+    Data source modes:
+    \b
+    --hybrid   Local DB with cloud fallback (default)
+    --local    Local DB only
+    --cloud    Cloud only
     """
+    from spooling.mcp_server import set_mode, serve_http as _serve_http, serve_stdio as _serve_stdio, MCP_URL
+    set_mode(local_mode or "hybrid")
     if stdio:
-        from spooling.mcp_server import serve_stdio
         console.print("[bold]Spooling MCP[/bold] over stdio")
-        serve_stdio()
+        _serve_stdio()
     else:
-        from spooling.mcp_server import serve_http, MCP_URL
         console.print(f"[bold]Spooling MCP[/bold] at {MCP_URL}")
-        serve_http()
+        _serve_http()
 
 
 def _check_ollama_preflight() -> None:

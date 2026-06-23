@@ -1,6 +1,7 @@
 """FastAPI server for Spooling API."""
 
 import json
+import re
 
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
@@ -13,6 +14,8 @@ from spooling.db import get_connection
 from spooling.tracing import Trace, Span, SpanKind, SpanStatus, SpanEvent
 from spooling.ingest import _store_trace, _store_session
 from spooling.parser import ParsedSession
+from spooling.connectors.factory import create_connector, create_rest_connector, is_rest_type, get_supported_types, get_supported_rest_types, ALL_CONNECTOR_TYPES
+from spooling.connectors.types import ConnectionConfig
 from datetime import datetime
 
 app = FastAPI(title="Spooling", version="0.1.0")
@@ -1436,3 +1439,326 @@ async def api_check_ollama():
             return {"status": "connected", "models": models, "url": base_url}
     except Exception:
         return {"status": "disconnected", "models": [], "url": base_url}
+
+
+# =====================================================================
+# Connector (Query Engine) API — ported from ToeBox
+# =====================================================================
+
+class ConnectorRequest(BaseModel):
+    type: str
+    credentials: dict | None = None
+
+
+class QueryRequest(BaseModel):
+    type: str
+    sql: str
+
+
+class SchemaRequest(BaseModel):
+    type: str
+    refresh: bool = False
+
+
+SAFE_SQL = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
+BLOCKED = re.compile(r"\b(DROP|DELETE|TRUNCATE|ALTER|INSERT|UPDATE|CREATE|GRANT|REVOKE)\b", re.IGNORECASE)
+
+
+def _validate_safe_sql(sql: str) -> str:
+    stripped = re.sub(r"/\*[\s\S]*?\*/", " ", sql)
+    stripped = re.sub(r"--[^\n]*", " ", stripped)
+    stripped = re.sub(r"\s+", " ", stripped).strip().rstrip(";").strip()
+    if ";" in stripped:
+        raise HTTPException(403, "Only single-statement SELECT queries are allowed")
+    if BLOCKED.search(stripped):
+        raise HTTPException(403, "Only SELECT queries are allowed")
+    if not SAFE_SQL.match(stripped):
+        raise HTTPException(403, "Only SELECT queries are allowed")
+    return stripped
+
+
+@app.get("/api/connectors/types")
+async def api_connector_types():
+    return {
+        "database": get_supported_types(),
+        "rest": get_supported_rest_types(),
+        "all": sorted(ALL_CONNECTOR_TYPES),
+    }
+
+
+@app.get("/api/datasources")
+async def api_list_datasources():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, type, name, status, last_error, last_synced_at, created_at FROM data_sources ORDER BY created_at"
+    ).fetchall()
+    conn.close()
+    return {"datasources": [dict(r) for r in rows]}
+
+
+@app.post("/api/datasources")
+async def api_create_datasource(body: ConnectorRequest):
+    if body.type not in ALL_CONNECTOR_TYPES:
+        raise HTTPException(400, f"Unsupported type: {body.type}. Supported: {', '.join(sorted(ALL_CONNECTOR_TYPES))}")
+    import uuid
+    cid = f"ds_{uuid.uuid4().hex[:12]}"
+    creds_json = json.dumps(body.credentials or {})
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO data_sources (id, type, name, credentials) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+        (cid, body.type, body.type, creds_json),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": cid, "type": body.type, "status": "disconnected"}
+
+
+@app.delete("/api/datasources/{datasource_id}")
+async def api_delete_datasource(datasource_id: str):
+    conn = get_connection()
+    conn.execute("DELETE FROM data_sources WHERE id = %s", (datasource_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/connectors/test")
+async def api_test_connector(body: ConnectorRequest):
+    if is_rest_type(body.type):
+        connector = create_rest_connector(body.type, body.credentials or {})
+    else:
+        config = _config_from_credentials(body.type, body.credentials or {})
+        connector = create_connector(config)
+    try:
+        await connector.connect()
+        result = await connector.test_connection()
+        return {"success": result.success, "message": result.message, "details": result.details}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+    finally:
+        try:
+            await connector.disconnect()
+        except Exception:
+            pass
+
+
+@app.post("/api/connectors/schema")
+async def api_connector_schema(body: SchemaRequest):
+    type_name = body.type
+    force_refresh = body.refresh
+
+    if not force_refresh:
+        conn = get_connection()
+        cached = conn.execute(
+            "SELECT schema_data, cached_at FROM schema_cache WHERE data_source_type = %s",
+            (type_name,),
+        ).fetchone()
+        conn.close()
+        if cached:
+            import datetime as _dt
+            age = (_dt.datetime.now(_dt.timezone.utc) - cached["cached_at"]).total_seconds()
+            if age < 1800:
+                return {"schemas": cached["schema_data"], "from_cache": True}
+
+    # Fetch live schema
+    conn_db = get_connection()
+    ds = conn_db.execute(
+        "SELECT credentials, config FROM data_sources WHERE type = %s", (type_name,)
+    ).fetchone()
+    conn_db.close()
+
+    credentials = dict(ds["credentials"]) if ds and ds["credentials"] else {}
+    db_config = dict(ds["config"]) if ds and ds["config"] else {}
+
+    if is_rest_type(type_name):
+        connector = create_rest_connector(type_name, {**credentials, **db_config})
+    else:
+        config = _config_from_credentials(type_name, {**credentials, **db_config})
+        connector = create_connector(config)
+
+    try:
+        await connector.connect()
+        schemas_list = await connector.list_schemas()
+        result = []
+        for s in schemas_list:
+            tables = await connector.list_tables(s)
+            tables_with_cols = []
+            for t in tables:
+                try:
+                    cols = await connector.get_table_columns(t.schema_name, t.name)
+                    tables_with_cols.append({
+                        "name": t.name,
+                        "type": t.type,
+                        "row_count": t.row_count,
+                        "description": t.description,
+                        "columns": [{"name": c.name, "dataType": c.data_type, "nullable": c.nullable, "isPrimaryKey": c.is_primary_key, "comment": c.comment} for c in cols],
+                    })
+                except Exception:
+                    tables_with_cols.append({"name": t.name, "type": t.type, "row_count": t.row_count, "description": t.description, "columns": []})
+            result.append({"name": s, "tables": tables_with_cols})
+
+        # Cache it
+        conn_db = get_connection()
+        conn_db.execute(
+            "INSERT INTO schema_cache (data_source_type, schema_data) VALUES (%s, %s) "
+            "ON CONFLICT (data_source_type) DO UPDATE SET schema_data = %s, cached_at = now()",
+            (type_name, json.dumps(result), json.dumps(result)),
+        )
+        conn_db.commit()
+        conn_db.close()
+
+        return {"schemas": result, "from_cache": False}
+    finally:
+        try:
+            await connector.disconnect()
+        except Exception:
+            pass
+
+
+@app.post("/api/connectors/query")
+async def api_connector_query(body: QueryRequest):
+    sql = _validate_safe_sql(body.sql)
+    type_name = body.type
+
+    conn_db = get_connection()
+    ds = conn_db.execute(
+        "SELECT credentials, config FROM data_sources WHERE type = %s", (type_name,)
+    ).fetchone()
+    conn_db.close()
+
+    if is_rest_type(type_name):
+        credentials = dict(ds["credentials"]) if ds and ds["credentials"] else {}
+        db_config = dict(ds["config"]) if ds and ds["config"] else {}
+        connector = create_rest_connector(type_name, {**credentials, **db_config})
+    else:
+        if ds:
+            credentials = {**dict(ds["credentials"]), **dict(ds["config"])}
+        else:
+            credentials = {}
+        config = _config_from_credentials(type_name, credentials)
+        connector = create_connector(config)
+
+    try:
+        await connector.connect()
+        result = await connector.query(sql)
+        return {
+            "rows": result.rows,
+            "fields": [{"name": f.name, "dataType": f.data_type} for f in result.fields],
+            "rowCount": result.row_count,
+            "executionTime": result.execution_time,
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    finally:
+        try:
+            await connector.disconnect()
+        except Exception:
+            pass
+
+
+def _config_from_credentials(type_name: str, creds: dict) -> ConnectionConfig:
+    return ConnectionConfig(
+        type=type_name,  # type: ignore
+        name=type_name,
+        host=creds.get("host"),
+        port=creds.get("port"),
+        database=creds.get("database"),
+        username=creds.get("username") or creds.get("user"),
+        password=creds.get("password"),
+        account=creds.get("account"),
+        warehouse=creds.get("warehouse"),
+        schema_=creds.get("schema"),
+        role=creds.get("role"),
+        project_id=creds.get("project_id"),
+        dataset_id=creds.get("dataset_id"),
+        ssl=creds.get("ssl", False),
+        custom_properties=creds.get("custom_properties"),
+    )
+
+
+# =====================================================================
+# Saved Queries API
+# =====================================================================
+
+class SavedQueryCreate(BaseModel):
+    name: str
+    sql_text: str
+    description: str = ""
+    data_source_type: str | None = None
+    folder_id: str | None = None
+    result_data: list | None = None
+
+
+@app.get("/api/saved-queries")
+async def api_list_saved_queries():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT sq.*, qf.name AS folder_name FROM saved_queries sq "
+        "LEFT JOIN query_folders qf ON qf.id = sq.folder_id "
+        "ORDER BY sq.updated_at DESC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/saved-queries")
+async def api_create_saved_query(body: SavedQueryCreate):
+    import uuid
+    qid = f"sq_{uuid.uuid4().hex[:12]}"
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO saved_queries (id, name, sql_text, description, data_source_type, folder_id, result_data) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (qid, body.name, body.sql_text, body.description, body.data_source_type, body.folder_id, json.dumps(body.result_data) if body.result_data else None),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": qid, "name": body.name, "status": "created"}
+
+
+@app.delete("/api/saved-queries")
+async def api_delete_saved_query(body: dict):
+    qid = body.get("id")
+    if not qid:
+        raise HTTPException(400, "id required")
+    conn = get_connection()
+    conn.execute("DELETE FROM saved_queries WHERE id = %s", (qid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# =====================================================================
+# Query Folders API
+# =====================================================================
+
+class QueryFolderCreate(BaseModel):
+    name: str
+
+
+@app.get("/api/query-folders")
+async def api_list_folders():
+    conn = get_connection()
+    rows = conn.execute("SELECT * FROM query_folders ORDER BY name").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/query-folders")
+async def api_create_folder(body: QueryFolderCreate):
+    import uuid
+    fid = f"qf_{uuid.uuid4().hex[:12]}"
+    conn = get_connection()
+    conn.execute("INSERT INTO query_folders (id, name) VALUES (%s, %s)", (fid, body.name))
+    conn.commit()
+    conn.close()
+    return {"id": fid, "name": body.name}
+
+
+@app.delete("/api/query-folders/{folder_id}")
+async def api_delete_folder(folder_id: str):
+    conn = get_connection()
+    conn.execute("DELETE FROM query_folders WHERE id = %s", (folder_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}

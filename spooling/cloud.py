@@ -766,3 +766,362 @@ def cloud_delete(project: str | None, cwd_substr: str | None, session_id: str | 
         return
 
     console.print(f"[green]Deleted[/green] {deleted} session(s) from {base}")
+
+
+# --- Pull (cloud → local) ---------------------------------------------------
+
+
+def _store_cloud_session_locally(
+    session: dict,
+    messages: list[dict],
+) -> str | None:
+    """Upsert a cloud session + its messages into the local Spooling DB.
+
+    Returns the session id on success, ``None`` on DB error.
+    """
+    from datetime import datetime as _dt
+
+    conn = get_connection()
+    try:
+        sid = session["id"]
+        started = _dt.fromisoformat(session["started_at"]) if session.get("started_at") else None
+        ended = _dt.fromisoformat(session["ended_at"]) if session.get("ended_at") else None
+
+        conn.execute(
+            """INSERT INTO sessions (
+                id, provider_id, project, title, cwd,
+                started_at, ended_at, message_count, tool_call_count,
+                estimated_input_tokens, estimated_output_tokens, estimated_cost_usd, model
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                provider_id = EXCLUDED.provider_id,
+                project = EXCLUDED.project,
+                title = EXCLUDED.title,
+                cwd = EXCLUDED.cwd,
+                started_at = EXCLUDED.started_at,
+                ended_at = EXCLUDED.ended_at,
+                message_count = EXCLUDED.message_count,
+                tool_call_count = EXCLUDED.tool_call_count,
+                estimated_input_tokens = EXCLUDED.estimated_input_tokens,
+                estimated_output_tokens = EXCLUDED.estimated_output_tokens,
+                estimated_cost_usd = EXCLUDED.estimated_cost_usd,
+                model = EXCLUDED.model""",
+            (
+                sid,
+                session.get("provider_id", "cloud"),
+                session.get("project"),
+                session.get("title"),
+                session.get("cwd"),
+                started,
+                ended,
+                session.get("message_count", len(messages)),
+                session.get("tool_call_count", 0),
+                session.get("input_tokens", 0),
+                session.get("output_tokens", 0),
+                session.get("estimated_cost_usd", 0.0),
+                session.get("model"),
+            ),
+        )
+
+        if messages:
+            for m in messages:
+                msg_id = f"{sid}-{m.get('sequence', 0)}"
+                ts = _dt.fromisoformat(m["timestamp"]) if m.get("timestamp") else None
+                conn.execute(
+                    """INSERT INTO messages (id, session_id, role, content, timestamp)
+                       VALUES (%s, %s, %s, %s, %s)
+                       ON CONFLICT (id) DO NOTHING""",
+                    (msg_id, sid, m["role"], m.get("content", ""), ts),
+                )
+        conn.commit()
+        return sid
+    except Exception as exc:
+        console.print(f"[red]  Error storing session {session.get('id', '?')}: {exc}[/red]")
+        conn.rollback()
+        return None
+    finally:
+        conn.close()
+
+
+def _pull_sessions(
+    limit: int,
+    batch: int,
+    base: str,
+    headers: dict,
+    since: datetime | None,
+    log,
+) -> tuple[int, int, str | None]:
+    """Fetch sessions from the cloud and store them locally.
+
+    Returns ``(accepted, skipped, error)``.
+    """
+    params = {"limit": min(limit, 200), "offset": 0}
+    if since:
+        params["since"] = since.isoformat()
+
+    with httpx.Client(timeout=60) as client:
+        try:
+            r = client.get(f"{base}/v1/sessions", headers=headers, params=params)
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            return 0, 0, f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+        except Exception as e:
+            return 0, 0, str(e)
+
+        data = r.json()
+        cloud_sessions = data.get("sessions", [])
+        if not cloud_sessions:
+            return 0, 0, None
+
+        accepted = 0
+        skipped = 0
+        for s in cloud_sessions:
+            try:
+                detail_r = client.get(
+                    f"{base}/v1/sessions/{s['id']}",
+                    headers=headers,
+                    timeout=30,
+                )
+                if not detail_r.is_success:
+                    skipped += 1
+                    log(f"  [yellow]skipped {s['id'][:12]}… ({detail_r.status_code})[/yellow]")
+                    continue
+                detail = detail_r.json()
+                result = _store_cloud_session_locally(
+                    detail.get("session", s),
+                    detail.get("messages", []),
+                )
+                if result:
+                    accepted += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                skipped += 1
+                log(f"  [yellow]error pulling {s.get('id', '?')[:12]}…: {e}[/yellow]")
+
+    return accepted, skipped, None
+
+
+@cloud.command("pull")
+@click.option("--limit", default=100, help="Max sessions to pull per run")
+@click.option("--batch", default=10, help="Concurrent session detail fetches")
+@click.option("--dry-run", is_flag=True, help="Show which sessions would be pulled. No writes.")
+def pull(limit: int, batch: int, dry_run: bool):
+    """Pull sessions from Spooling Cloud into the local database.
+
+    Reads the last-pull watermark from ``~/.config/spooling/cloud.json``
+    and fetches sessions synced since then. Combine with ``spooling push``
+    for a full bidirectional sync.
+    """
+    headers = _auth_headers()
+    base = _api_base()
+
+    cfg = _load_config()
+    last = cfg.get("last_pull_at")
+    watermark: datetime | None = datetime.fromisoformat(last) if last else None
+
+    if watermark:
+        console.print(f"[dim]Last pull: {watermark.strftime('%Y-%m-%d %H:%M:%S UTC')}[/dim]")
+
+    # First fetch the list to show the preview.
+    params = {"limit": min(limit, 200), "offset": 0}
+    if watermark:
+        params["since"] = watermark.isoformat()
+
+    try:
+        r = httpx.get(f"{base}/v1/sessions", headers=headers, params=params, timeout=30)
+        r.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]HTTP {e.response.status_code}: {e.response.text[:200]}[/red]")
+        return
+    except Exception as e:
+        console.print(f"[red]{e}[/red]")
+        return
+
+    data = r.json()
+    cloud_sessions = data.get("sessions", [])
+    if not cloud_sessions:
+        console.print("[yellow]No new cloud sessions to pull.[/yellow]")
+        return
+
+    if dry_run:
+        console.print(
+            f"[dim]Dry run: {len(cloud_sessions)} session(s) would be "
+            f"pulled from {base}[/dim]"
+        )
+        for s in cloud_sessions[:20]:
+            title = (s.get("title") or "(untitled)")[:60]
+            by = s.get("pushed_by_name") or s.get("pushed_by_email") or "?"
+            console.print(
+                f"  [cyan]{s.get('project') or '-'}[/cyan]  {title}  "
+                f"[dim](by {by})[/dim]"
+            )
+        if len(cloud_sessions) > 20:
+            console.print(f"  ... and {len(cloud_sessions) - 20} more")
+        return
+
+    accepted, skipped, err = _pull_sessions(limit, batch, base, headers, watermark, console.print)
+    if err:
+        console.print(f"[red]{err}[/red]")
+        return
+
+    # Advance watermark
+    new_watermark = datetime.now(timezone.utc)
+    cfg = _load_config()
+    cfg["last_pull_at"] = new_watermark.isoformat()
+    _save_config(cfg)
+
+    console.print(
+        f"[green]Done.[/green] {accepted} session(s) pulled from {base}"
+        + (f" ([yellow]{skipped} skipped[/yellow])" if skipped else "")
+    )
+
+
+@cloud.command("sync")
+@click.option("--limit", default=100, help="Max sessions per direction")
+@click.option("--batch", default=20, help="Sessions per request")
+@click.option(
+    "--project", default=None,
+    help="Only sync sessions whose project matches exactly.",
+)
+@click.option(
+    "--cwd", "cwd_substr", default=None,
+    help="Only sync sessions whose cwd contains this substring.",
+)
+@click.option(
+    "--title", "title_substr", default=None,
+    help="Only sync sessions whose title contains this substring.",
+)
+@click.option("--dry-run", is_flag=True, help="Show what would be synced. No network writes.")
+@click.option(
+    "--no-redact", "no_redact", is_flag=True,
+    help="Skip the client-side secret redactor.",
+)
+def sync(limit: int, batch: int, project: str | None, cwd_substr: str | None, title_substr: str | None, dry_run: bool, no_redact: bool):
+    """Bidirectional sync: push local sessions up, then pull cloud sessions down.
+
+    Runs ``spooling push`` first, then ``spooling pull``, so after this
+    command completes the local DB and the cloud workspace have the same
+    sessions (subject to filter scoping).
+    """
+    headers = _auth_headers()
+    base = _api_base()
+
+    # Phase 1: Push local → cloud
+    console.print("[bold]Phase 1: Push local → cloud[/bold]")
+    local_sessions = _collect_sessions(
+        limit=limit,
+        since=None,
+        project=project,
+        cwd_substr=cwd_substr,
+        title_substr=title_substr,
+    )
+    if not local_sessions:
+        console.print("  [yellow]No local sessions to push.[/yellow]")
+    else:
+        if not no_redact:
+            total_redactions = 0
+            for s in local_sessions:
+                _, n = redact_messages(s.get("messages") or [])
+                total_redactions += n
+            if total_redactions:
+                console.print(f"  [dim]Redacted {total_redactions} secret(s) before push.[/dim]")
+
+        if dry_run:
+            console.print(f"  [dim]Dry run: {len(local_sessions)} session(s) would be pushed[/dim]")
+        else:
+            pushed, rejected, err = _push_batches(local_sessions, batch, base, headers, console.print)
+            if err:
+                console.print(f"  [red]{err}[/red]")
+            else:
+                note = f" ([yellow]{rejected} rejected[/yellow])" if rejected else ""
+                console.print(f"  [green]Pushed[/green] {pushed} session(s){note}")
+
+    # Phase 2: Pull cloud → local
+    console.print("[bold]Phase 2: Pull cloud → local[/bold]")
+    cfg = _load_config()
+    last = cfg.get("last_pull_at")
+    watermark: datetime | None = datetime.fromisoformat(last) if last else None
+
+    params = {"limit": min(limit, 200), "offset": 0}
+    if watermark:
+        params["since"] = watermark.isoformat()
+
+    try:
+        r = httpx.get(f"{base}/v1/sessions", headers=headers, params=params, timeout=30)
+        r.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        console.print(f"  [red]HTTP {e.response.status_code}: {e.response.text[:200]}[/red]")
+        return
+    except Exception as e:
+        console.print(f"  [red]{e}[/red]")
+        return
+
+    data = r.json()
+    cloud_sessions = data.get("sessions", [])
+    if not cloud_sessions:
+        console.print("  [yellow]No new cloud sessions to pull.[/yellow]")
+    else:
+        if dry_run:
+            console.print(f"  [dim]Dry run: {len(cloud_sessions)} session(s) would be pulled[/dim]")
+            for s in cloud_sessions[:10]:
+                title = (s.get("title") or "(untitled)")[:60]
+                by = s.get("pushed_by_name") or s.get("pushed_by_email") or "?"
+                console.print(f"    [cyan]{s.get('project') or '-'}[/cyan]  {title}  [dim](by {by})[/dim]")
+        else:
+            accepted, skipped, err = _pull_sessions(limit, batch, base, headers, watermark, lambda msg: console.print(f"  {msg}"))
+            if err:
+                console.print(f"  [red]{err}[/red]")
+            else:
+                new_watermark = datetime.now(timezone.utc)
+                cfg = _load_config()
+                cfg["last_pull_at"] = new_watermark.isoformat()
+                _save_config(cfg)
+                skip_note = f" ([yellow]{skipped} skipped[/yellow])" if skipped else ""
+                console.print(f"  [green]Pulled[/green] {accepted} session(s){skip_note}")
+
+    console.print("[bold green]Bidirectional sync complete.[/bold green]")
+
+
+# --- Cloud helpers for --cloud mode on search / stats / mcp ------------------
+
+def cloud_search(query: str, limit: int = 10, project: str | None = None) -> list[dict]:
+    """Search Spooling Cloud via ILIKE. Returns list of result dicts."""
+    headers = _auth_headers()
+    base = _api_base()
+    params: dict = {"q": query, "limit": limit}
+    if project:
+        params["project"] = project
+    try:
+        r = httpx.get(f"{base}/v1/search", headers=headers, params=params, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return []
+    sessions = data.get("sessions", [])
+    return [
+        {
+            "content": f"{s.get('title') or '(untitled)'} — {s.get('project') or '?'}",
+            "role": "system",
+            "project": s.get("project"),
+            "timestamp": s.get("started_at"),
+            "session_id": s["id"],
+            "similarity": 0.0,
+            "title": s.get("title"),
+            "cwd": None,
+            "_source": "cloud",
+        }
+        for s in sessions
+    ]
+
+
+def cloud_stats() -> dict | None:
+    """Fetch workspace-level stats from Spooling Cloud. Returns dict or None."""
+    headers = _auth_headers()
+    base = _api_base()
+    try:
+        r = httpx.get(f"{base}/v1/stats", headers=headers, timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None

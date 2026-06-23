@@ -256,3 +256,55 @@ INSERT INTO eval_rubrics (id, name, description, kind, target_kind, config) VALU
     ('agent-success',        'Agent success',         'Did the subagent return without error and produce output?',       'function', 'span',  '{"span_kind":"agent"}'),
     ('llm-judge-helpfulness','LLM judge: helpfulness','LLM grades the assistant turn on a 0-1 helpfulness scale.',       'llm_judge','span',  '{"span_kind":"llm_call"}')
 ON CONFLICT (id) DO NOTHING;
+
+-- ============================================================
+-- Connector / Query Engine tables
+-- ============================================================
+
+-- Registered data source connections
+CREATE TABLE IF NOT EXISTS data_sources (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    credentials JSONB DEFAULT '{}',
+    config JSONB DEFAULT '{}',
+    status TEXT DEFAULT 'disconnected',
+    last_error TEXT,
+    last_synced_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_data_sources_type ON data_sources(type);
+
+-- Schema cache for connectors (avoids repeated introspection)
+CREATE TABLE IF NOT EXISTS schema_cache (
+    id BIGSERIAL PRIMARY KEY,
+    data_source_type TEXT NOT NULL,
+    schema_data JSONB NOT NULL,
+    cached_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (data_source_type)
+);
+
+-- Query folders for organizing saved queries
+CREATE TABLE IF NOT EXISTS query_folders (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Saved queries
+CREATE TABLE IF NOT EXISTS saved_queries (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    sql_text TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    data_source_type TEXT,
+    folder_id TEXT REFERENCES query_folders(id) ON DELETE SET NULL,
+    result_data JSONB DEFAULT 'null',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_queries_folder ON saved_queries(folder_id);
+CREATE INDEX IF NOT EXISTS idx_saved_queries_source ON saved_queries(data_source_type);

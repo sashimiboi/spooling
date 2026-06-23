@@ -1,6 +1,6 @@
 [project]
 name = "spooling"
-version = "0.1.5"
+version = "0.1.6"
 description = "Local session tracker and semantic search for AI coding assistants"
 readme = "README.md"
 license = "MIT"
@@ -38,6 +38,13 @@ include = ["spooling*"]
 dev = [
     "pytest>=8.0",
     "pytest-mock>=3.14",
+]
+connectors = [
+    "snowflake-connector-python>=3.0",
+    "google-cloud-bigquery>=3.0",
+    "mysql-connector-python>=8.0",
+    "clickhouse-connect>=0.5",
+    "motor>=3.0",
 ]
 
 [tool.pytest.ini_options]

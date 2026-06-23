@@ -190,7 +190,7 @@ function ToolCallItem({ tc }: { tc: ToolCallInfo }) {
   const canExpand = !!(tc.result_preview?.trim());
 
   return (
-    <div className={`rounded-md border ${getToolBorderColor(tc.name)} bg-card/50`}>
+    <div className="rounded-md border bg-card/50">
       <button
         onClick={() => canExpand && setExpanded(!expanded)}
         className={`flex items-center gap-2 w-full text-left px-2.5 py-1.5 ${canExpand ? 'cursor-pointer hover:bg-accent/50' : 'cursor-default'} transition-colors rounded-md`}
