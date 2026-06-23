@@ -161,6 +161,16 @@ def stats(week, days, cloud_mode):
                 table.add_row(t["tool_name"], str(t["uses"]))
             console.print(table)
 
+        # Agent subtypes
+        agent_subtypes = data.get("agent_subtypes", [])
+        if agent_subtypes:
+            table = Table(title="Agent Subtypes", show_lines=False)
+            table.add_column("Agent", style="cyan")
+            table.add_column("Uses", justify="right")
+            for a in agent_subtypes:
+                table.add_row(a["agent_type"], str(a["uses"]))
+            console.print(table)
+
         # Top providers (agents)
         providers_detail = data.get("providers_detail", [])
         if providers_detail:

@@ -1127,6 +1127,7 @@ def cloud_stats() -> dict | None:
         data.setdefault("projects", [])
         data.setdefault("providers_detail", [])
         data.setdefault("top_tools", [])
+        data.setdefault("agent_subtypes", [])
         data.setdefault("recent_sessions", [])
         return data
     except Exception:
