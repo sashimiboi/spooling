@@ -137,6 +137,63 @@ def stats(week, days, cloud_mode):
             title="[bold]Spooling Cloud Overview[/bold]",
             style="cyan",
         ))
+
+        # Projects
+        projects = data.get("projects", [])
+        if projects:
+            table = Table(title="Projects", show_lines=False)
+            table.add_column("Project", style="cyan")
+            table.add_column("Sessions", justify="right")
+            table.add_column("Messages", justify="right")
+            table.add_column("Est. Cost", justify="right")
+            for p in projects:
+                proj = p.get("project", "?")[:40]
+                table.add_row(proj, str(p["sessions"]), str(p["messages"]), f"${float(p['cost']):.2f}")
+            console.print(table)
+
+        # Top tools
+        top_tools = data.get("top_tools", [])
+        if top_tools:
+            table = Table(title="Top Tools", show_lines=False)
+            table.add_column("Tool", style="magenta")
+            table.add_column("Uses", justify="right")
+            for t in top_tools:
+                table.add_row(t["tool_name"], str(t["uses"]))
+            console.print(table)
+
+        # Top providers (agents)
+        providers_detail = data.get("providers_detail", [])
+        if providers_detail:
+            table = Table(title="Top Providers", show_lines=False)
+            table.add_column("Provider", style="cyan")
+            table.add_column("Sessions", justify="right")
+            table.add_column("Est. Cost", justify="right")
+            for p in providers_detail:
+                table.add_row(p["provider_id"], str(p["sessions"]), f"${float(p['cost']):.2f}")
+            console.print(table)
+
+        # Recent sessions
+        recent = data.get("recent_sessions", [])
+        if recent:
+            table = Table(title="Recent Sessions", show_lines=False)
+            table.add_column("Started", style="dim")
+            table.add_column("Provider")
+            table.add_column("Project", style="cyan")
+            table.add_column("Title")
+            table.add_column("Msgs", justify="right")
+            table.add_column("Cost", justify="right")
+            for r in recent:
+                ts = (r.get("started_at") or "")[:16]
+                title = (r.get("title") or "")[:50]
+                table.add_row(
+                    ts,
+                    r.get("provider_id", ""),
+                    r.get("project", "") or "",
+                    title,
+                    str(r.get("message_count", 0)),
+                    f"${float(r.get('estimated_cost_usd', 0)):.2f}",
+                )
+            console.print(table)
         return
 
     from spooling.stats import get_overview, get_daily_stats

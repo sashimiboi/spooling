@@ -1122,6 +1122,12 @@ def cloud_stats() -> dict | None:
     try:
         r = httpx.get(f"{base}/v1/stats", headers=headers, timeout=15)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        # Ensure nested fields exist even if older API version
+        data.setdefault("projects", [])
+        data.setdefault("providers_detail", [])
+        data.setdefault("top_tools", [])
+        data.setdefault("recent_sessions", [])
+        return data
     except Exception:
         return None
