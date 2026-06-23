@@ -337,14 +337,16 @@ def build_flat_trace_from_messages(
     cwd: Optional[str] = None,
     git_branch: Optional[str] = None,
     model: Optional[str] = None,
+    agent_name: Optional[str] = None,
 ) -> Trace:
     """Build a flat Trace from a provider's ParsedMessage list.
 
     Providers whose data we can't tree-reconstruct (Copilot, Cursor, Windsurf,
     most Codex sessions) use this: one llm_call span per assistant turn and
     one tool span per tool name mentioned in that turn. The session span is
-    the root; there are no agent spans because these providers don't expose
-    subagent boundaries.
+    the root; if *agent_name* is provided an agent span is inserted as the
+    parent of all activity spans so the admin dashboard can group sessions
+    by "agent subtype".
 
     Cost per turn is computed via ``spooling.pricing.get_rates(model)`` so
     Gemini Code Assist and other providers get real per-model
@@ -368,6 +370,15 @@ def build_flat_trace_from_messages(
         started_at=first_ts,
     )
 
+    parent = root
+    if agent_name:
+        parent = tb.start_agent(
+            parent=root,
+            name=agent_name,
+            started_at=first_ts,
+            agent_type=agent_name,
+        )
+
     for m in messages:
         ts = m.timestamp
         if m.role == "assistant":
@@ -377,7 +388,7 @@ def build_flat_trace_from_messages(
             cost = rates.cost(input_tokens=est_in, output_tokens=est_out)
 
             llm_span = tb.start_llm_call(
-                parent=root,
+                parent=parent,
                 name="assistant.turn",
                 started_at=ts,
                 model=model,
@@ -401,7 +412,7 @@ def build_flat_trace_from_messages(
                 td = td_by_name.get(tool_name)
                 raw_input = td.tool_input_raw if td else None
                 tool_span = tb.start_tool(
-                    parent=root,
+                    parent=parent,
                     name=f"tool:{tool_name}",
                     tool_name=tool_name,
                     started_at=ts,
@@ -418,6 +429,10 @@ def build_flat_trace_from_messages(
             # llm-less "step" span so traces aren't missing the user side.
             # We record nothing here to keep llm_count honest.
             pass
+
+    if agent_name:
+        last_ts = next((m.timestamp for m in reversed(messages) if m.timestamp), first_ts)
+        tb.end_span(parent, ended_at=last_ts)
 
     return tb.finalize()
 

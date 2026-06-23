@@ -280,6 +280,7 @@ class OpencodeProvider(Provider):
                     continue
 
                 model = _extract_model(s["model"], first_assistant_data)
+                agent = s["agent"] or None
 
                 session = ParsedSession(
                     session_id=sid,
@@ -301,6 +302,7 @@ class OpencodeProvider(Provider):
                     messages=messages,
                     cwd=cwd,
                     model=model,
+                    agent_name=agent,
                 )
                 sessions.append(session)
         except sqlite3.Error:
