@@ -13,6 +13,7 @@ from spooling.providers.cortex_code import CortexCodeProvider
 from spooling.providers.opencode import OpencodeProvider
 from spooling.providers.gitlab import GitLabProvider
 from spooling.providers.github import GitHubProvider
+from spooling.providers.hermes import HermesProvider
 
 __all__ = [
     "Provider",
@@ -30,6 +31,7 @@ __all__ = [
     "OpencodeProvider",
     "GitLabProvider",
     "GitHubProvider",
+    "HermesProvider",
 ]
 
 

@@ -197,6 +197,13 @@ PROVIDER_TEMPLATES = {
             {"key": "scope", "label": "PR/issue scope", "default": "involves", "options": ["involves", "author", "assignee"]},
         ],
     },
+    "hermes": {
+        "name": "Hermes Agent",
+        "icon": "hermes",
+        "default_path": "~/.hermes/state.db",
+        "description": "Nous Research Hermes Agent — multi-platform AI agent. SQLite DB with sessions, messages, and per-session token/cost roll-ups.",
+        "status_hint": "Auto-detected from ~/.hermes/.",
+    },
 }
 
 

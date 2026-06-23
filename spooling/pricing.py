@@ -56,6 +56,7 @@ PROVIDER_DEFAULT_MODEL: dict[str, str] = {
     "codex":         "gpt-5",
     "gemini":        "gemini-2.5-flash",
     "opencode":      "gpt-4o",
+    "hermes":        "gpt-4o",
 }
 
 _UNKNOWN_MODEL_SENTINELS = {"", "auto", "default", "<synthetic>"}
