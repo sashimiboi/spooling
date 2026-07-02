@@ -21,7 +21,7 @@ OPENCODE_DB = OPENCODE_DIR / "opencode.db"
 
 # Database
 DB_HOST = os.getenv("SPOOLING_DB_HOST", "localhost")
-DB_PORT = int(os.getenv("SPOOLING_DB_PORT", "5432"))
+DB_PORT = int(os.getenv("SPOOLING_DB_PORT", "5434"))
 DB_NAME = os.getenv("SPOOLING_DB_NAME", "spooling")
 DB_USER = os.getenv("SPOOLING_DB_USER", "spooling")
 DB_PASSWORD = os.getenv("SPOOLING_DB_PASSWORD", "spooling")
