@@ -191,6 +191,110 @@ spooling mcp              # streamable-HTTP at http://127.0.0.1:3004/mcp (defaul
 spooling mcp --stdio      # stdio transport, for stdio-only clients
 ```
 
+### `spooling tunnel`
+
+Create a Cloudflare quick tunnel (no account required) to expose your local MCP server to the internet. Once started, it prints a public HTTPS URL you can drop straight into any remote MCP client config. Requires [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) to be installed.
+
+```bash
+spooling tunnel                    # Expose Spooling MCP (port 3004, default)
+spooling tunnel --port 8090        # Expose a custom local port
+spooling tunnel -p 3000 -n my-api  # Named tunnel on port 3000
+```
+
+Options:
+- `-p, --port` - Local port to expose (default: 3004)
+- `-n, --name` - Label for display purposes
+
+After the tunnel starts, it prints the public URL and an MCP config snippet ready to paste:
+
+```json
+{"mcpServers": {"spooling": {"type": "http", "url": "https://<random>.trycloudflare.com/mcp"}}}
+```
+
+Install `cloudflared` if not already present:
+
+```bash
+# macOS
+brew install cloudflared
+
+# Linux
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared
+
+# Windows
+winget install cloudflare.cloudflared
+```
+
+### `spooling cost`
+
+Detailed cost tracking and spend analysis. All subcommands read from the local database — no network calls.
+
+```bash
+spooling cost overview                          # Total spend: input/output/cache breakdown
+spooling cost overview --provider cursor        # Filter to one provider
+spooling cost overview --days 7                 # Last 7 days only
+
+spooling cost breakdown                         # Cost by provider (default)
+spooling cost breakdown --by model              # Cost by model
+spooling cost breakdown --by project            # Cost by project
+spooling cost breakdown --by model --days 30    # Model breakdown, last 30 days
+
+spooling cost daily                             # Daily trend (last 30 days)
+spooling cost daily --days 14                   # Last 14 days
+spooling cost daily --provider codex            # Filter by provider
+
+spooling cost monthly                           # Monthly trend (last 12 months)
+spooling cost monthly --months 6                # Last 6 months
+
+spooling cost session <session-id>              # Detailed cost for a single session
+
+spooling cost recalc                            # Dry-run: re-price all sessions against current rates
+spooling cost recalc --apply                    # Actually persist the repriced values
+spooling cost recalc --session <id> --apply     # Reprice one session
+spooling cost recalc --provider cursor --apply  # Reprice all sessions for a provider
+```
+
+### `spooling eval`
+
+Run LLM-as-judge rubrics against your session traces.
+
+```bash
+spooling eval list                              # List all configured rubrics
+spooling eval run --rubric <id> --trace <id>    # Score one trace
+spooling eval run --rubric <id> --days 7        # Batch-score traces from the last 7 days
+```
+
+### `spooling experiment`
+
+Create and run Strands-style experiments — a set of test cases evaluated by one or more rubrics.
+
+```bash
+spooling experiment list                        # List all experiments
+spooling experiment create --file spec.json     # Register an experiment from a JSON spec
+spooling experiment run --id <experiment-id>    # Run an experiment and persist the report
+spooling experiment show --run <run-id>         # Show the results of a past run
+```
+
+### `spooling otel`
+
+Ingest OpenTelemetry / Strands span exports from external sources into Spooling.
+
+```bash
+spooling otel ingest --file spans.json                         # Ingest an OTLP JSON export
+spooling otel ingest --file spans.json --provider my-agent     # Tag with a custom provider id
+spooling otel ingest --file spans.json --project myproject     # Tag with a project name
+```
+
+### `spooling pricing`
+
+Manage the LiteLLM-backed model pricing table used for cost calculations.
+
+```bash
+spooling pricing show                           # Show cache status and source info
+spooling pricing show claude-sonnet-4-5         # Show per-component rates for a model ($/Mtok)
+spooling pricing refresh                        # Force-fetch latest rates into ~/.spool/model_prices.json
+```
+
 ---
 
 ## Spooling Cloud (optional)
@@ -427,6 +531,7 @@ spooling/
 │   ├── stats.py             # Usage statistics
 │   ├── watcher.py           # File watcher (watchdog)
 │   ├── agent.py             # Chat agent (Ollama + Anthropic)
+│   ├── tunnel.py            # Cloudflare quick tunnel support
 │   └── server.py            # FastAPI API server
 └── ui/                      # Next.js frontend
     ├── next.config.js       # API proxy to :3002
