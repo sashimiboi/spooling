@@ -1,4 +1,4 @@
-"""localtunnel support for exposing local MCP servers."""
+"""Cloudflare tunnel support for exposing local MCP servers."""
 
 import re
 import subprocess
@@ -9,15 +9,15 @@ from rich.console import Console
 
 console = Console()
 
-# Pattern to match localtunnel URLs
-TUNNEL_URL_PATTERN = re.compile(r"https://[a-z0-9-]+\.loca\.lt")
+# Pattern to match Cloudflare quick tunnel URLs
+TUNNEL_URL_PATTERN = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 
 
-def check_localtunnel() -> bool:
-    """Check if the lt CLI is installed."""
+def check_cloudflared() -> bool:
+    """Check if cloudflared is installed."""
     try:
         result = subprocess.run(
-            ["lt", "--version"],
+            ["cloudflared", "version"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -35,15 +35,12 @@ def _validate_port(port: int) -> bool:
 def start_tunnel(
     port: int,
     name: Optional[str] = None,
-    subdomain: Optional[str] = None,
 ) -> Optional[str]:
-    """Start a localtunnel and return the public URL.
+    """Start a Cloudflare quick tunnel and return the public URL.
 
     Args:
         port: Local port to expose (1-65535)
         name: Optional name for the tunnel (for display purposes)
-        subdomain: Requested subdomain on loca.lt (e.g. "spooling-mcp").
-                   Not guaranteed if already taken.
 
     Returns:
         The tunnel URL if successful, None otherwise
@@ -52,17 +49,17 @@ def start_tunnel(
         console.print(f"[red]Invalid port: {port}. Must be 1-65535.[/red]")
         return None
 
-    if not check_localtunnel():
-        console.print("[red]localtunnel (lt) is not installed.[/red]")
-        console.print("Install it with:")
-        console.print("  [bold]npm install -g localtunnel[/bold]")
+    if not check_cloudflared():
+        console.print("[red]cloudflared is not installed.[/red]")
+        console.print("Install it:")
+        console.print("  macOS:   [bold]brew install cloudflared[/bold]")
+        console.print("  Linux:   [bold]curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared[/bold]")
+        console.print("  Windows: [bold]winget install cloudflare.cloudflared[/bold]")
         return None
 
-    cmd = ["lt", "--port", str(port)]
-    if subdomain:
-        cmd += ["--subdomain", subdomain]
+    cmd = ["cloudflared", "tunnel", "--no-autoupdate", "--url", f"http://localhost:{port}"]
 
-    console.print(f"[bold]Starting localtunnel to localhost:{port}...[/bold]")
+    console.print(f"[bold]Starting Cloudflare tunnel to localhost:{port}...[/bold]")
 
     process = None
     try:
@@ -76,14 +73,12 @@ def start_tunnel(
 
         url = None
         start_time = time.time()
-        timeout = 30  # seconds
+        timeout = 30
 
         while time.time() - start_time < timeout:
             line = process.stdout.readline()
             if not line:
                 break
-
-            console.print(f"[dim]{line.rstrip()}[/dim]")
 
             match = TUNNEL_URL_PATTERN.search(line.strip())
             if match:
@@ -93,9 +88,11 @@ def start_tunnel(
         if url:
             console.print()
             console.print(f"[green]Tunnel started![/green]")
-            console.print(f"  URL: [bold]{url}[/bold]")
-            console.print(f"  MCP: [bold]{url}/mcp[/bold]")
-            console.print(f"  Local: http://localhost:{port}")
+            console.print()
+            console.print(f"  [bold cyan]MCP endpoint:[/bold cyan] [bold]{url}/mcp[/bold]")
+            console.print()
+            console.print(f"  [dim]Tunnel: {url}[/dim]")
+            console.print(f"  [dim]Local:  http://localhost:{port}[/dim]")
             console.print()
             console.print("Press [bold]Ctrl+C[/bold] to stop the tunnel")
 
@@ -118,7 +115,7 @@ def start_tunnel(
         return url
 
     except FileNotFoundError:
-        console.print("[red]lt not found in PATH.[/red]")
+        console.print("[red]cloudflared not found in PATH.[/red]")
         return None
     except Exception as e:
         console.print(f"[red]Tunnel error:[/red] {e}")
@@ -133,13 +130,11 @@ def start_tunnel(
 
 def start_tunnel_background(
     port: int,
-    subdomain: Optional[str] = None,
 ) -> Tuple[Optional[subprocess.Popen], Optional[str]]:
     """Start a tunnel in the background and return the process and URL.
 
     Args:
         port: Local port to expose (1-65535)
-        subdomain: Requested subdomain on loca.lt
 
     Returns:
         A tuple of (process, url) if successful, (None, None) otherwise
@@ -147,12 +142,10 @@ def start_tunnel_background(
     if not _validate_port(port):
         return None, None
 
-    if not check_localtunnel():
+    if not check_cloudflared():
         return None, None
 
-    cmd = ["lt", "--port", str(port)]
-    if subdomain:
-        cmd += ["--subdomain", subdomain]
+    cmd = ["cloudflared", "tunnel", "--no-autoupdate", "--url", f"http://localhost:{port}"]
 
     process = subprocess.Popen(
         cmd,
