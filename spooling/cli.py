@@ -680,26 +680,29 @@ def pricing_show(model):
 
 @cli.command()
 @click.option("--port", "-p", default=3004, type=int, help="Local port to tunnel (default: 3004 for Spooling MCP)")
+@click.option("--subdomain", "-s", default=None, help="Requested subdomain on loca.lt (e.g. 'spooling-mcp'). Not guaranteed if taken.")
 @click.option("--name", "-n", default=None, help="Name for this tunnel (for display)")
-def tunnel(port, name):
-    """Start a Cloudflare tunnel to expose a local MCP server.
+def tunnel(port, subdomain, name):
+    """Start a localtunnel to expose a local MCP server.
 
-    Creates a quick tunnel (no account required) that exposes your local
-    MCP server to the internet. The tunnel URL can be used by any
-    MCP-compatible client.
+    Creates a tunnel (no account required) that exposes your local MCP
+    server to the internet. The tunnel URL can be used by any
+    MCP-compatible client on any device.
+
+    Requires: npm install -g localtunnel
 
     Examples:
     \b
-    spooling tunnel                    # Tunnel Spooling MCP (port 3004)
-    spooling tunnel --port 8090        # Tunnel a custom MCP server
-    spooling tunnel -p 3000 -n my-api  # Named tunnel
+    spooling tunnel                              # Tunnel Spooling MCP (port 3004)
+    spooling tunnel --subdomain spooling-mcp     # Request a stable subdomain
+    spooling tunnel --port 8090                  # Tunnel a custom MCP server
     """
     from spooling.tunnel import start_tunnel
 
     display_name = name or f"port {port}"
     console.print(f"[bold]Starting tunnel for {display_name}...[/bold]")
 
-    url = start_tunnel(port=port, name=name)
+    url = start_tunnel(port=port, name=name, subdomain=subdomain)
     if url:
         # Print MCP config snippet for easy copy-paste
         console.print()

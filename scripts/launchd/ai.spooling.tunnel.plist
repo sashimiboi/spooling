@@ -8,6 +8,8 @@
     <array>
         <string>/Users/YOUR_USERNAME/.local/bin/spooling</string>
         <string>tunnel</string>
+        <string>--subdomain</string>
+        <string>YOUR-SUBDOMAIN</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
