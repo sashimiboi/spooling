@@ -29,6 +29,7 @@ from typing import Any, Optional
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from spooling.db import get_connection
 
@@ -127,6 +128,9 @@ mcp = FastMCP(
     host=MCP_HOST,
     port=MCP_PORT,
     stateless_http=True,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
+    ),
 )
 
 
