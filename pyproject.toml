@@ -24,7 +24,7 @@ dependencies = [
     "anthropic>=0.40",
     "strands-agents[ollama]>=1.35",
     "strands-agents-evals>=0.1",
-    "mcp>=1.27",
+    "mcp>=1.27,<2",
 ]
 
 [project.optional-dependencies]
