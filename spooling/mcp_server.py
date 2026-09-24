@@ -30,6 +30,9 @@ from typing import Any, Optional
 import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 from spooling.db import get_connection
 
@@ -558,6 +561,32 @@ def run_eval(rubric_id: str, trace_id: str) -> dict:
     return {"status": "ok", "rubric_id": rubric_id, "trace_id": trace_id, "result": _row(row)}
 
 
+# --- auth middleware --------------------------------------------------------
+
+class _BearerTokenMiddleware(BaseHTTPMiddleware):
+    """Enforce Bearer-token authentication on every MCP request.
+
+    Only active when a tunnel token has been configured via
+    ``spooling token generate`` or the ``SPOOLING_MCP_TOKEN`` env var.
+    Requests without a valid ``Authorization: Bearer <token>`` header receive
+    a 401 response and are never forwarded to the MCP handler.
+    """
+
+    def __init__(self, app, token: str) -> None:
+        super().__init__(app)
+        self._token = token
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        auth = request.headers.get("Authorization", "")
+        if not (auth.startswith("Bearer ") and auth[7:].rstrip() == self._token):
+            return Response(
+                "Unauthorized",
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return await call_next(request)
+
+
 # --- entrypoint ------------------------------------------------------------
 
 def serve_stdio() -> None:
@@ -566,8 +595,24 @@ def serve_stdio() -> None:
 
 
 def serve_http() -> None:
-    """Run the MCP server over streamable-HTTP at MCP_URL."""
-    mcp.run(transport="streamable-http")
+    """Run the MCP server over streamable-HTTP at MCP_URL.
+
+    If a tunnel token is configured (via ``spooling token generate`` or the
+    ``SPOOLING_MCP_TOKEN`` env var), every inbound request must carry a valid
+    ``Authorization: Bearer <token>`` header.  This keeps the public tunnel
+    endpoint private even though it's accessible over the internet.
+    """
+    from spooling.tunnel_auth import load_token
+
+    token = load_token()
+    if token:
+        import uvicorn
+
+        app = mcp.streamable_http_app()
+        app.add_middleware(_BearerTokenMiddleware, token=token)
+        uvicorn.run(app, host=MCP_HOST, port=MCP_PORT, log_level="warning")
+    else:
+        mcp.run(transport="streamable-http")
 
 
 if __name__ == "__main__":

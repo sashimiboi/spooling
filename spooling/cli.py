@@ -688,22 +688,44 @@ def tunnel(port, name):
     server to the internet. The tunnel URL can be used by any
     MCP-compatible client on any device.
 
+    If a tunnel token has been generated (via [bold]spooling token generate[/bold]),
+    the printed config snippet includes the Bearer auth header automatically.
+
     Examples:
     \b
     spooling tunnel                    # Tunnel Spooling MCP (port 3004)
     spooling tunnel --port 8090        # Tunnel a custom MCP server
     """
+    import json as _json
     from spooling.tunnel import start_tunnel
+    from spooling.tunnel_auth import load_token
+
+    tok = load_token()
+
+    if tok:
+        console.print()
+        console.print(f"[bold cyan]Tunnel token:[/bold cyan] [bold]{tok}[/bold]")
+        console.print("[dim]The MCP server will require this token on every request.[/dim]")
+        console.print()
+    else:
+        console.print()
+        console.print("[yellow]No tunnel token configured — the endpoint will be unauthenticated.[/yellow]")
+        console.print("[dim]Run [bold]spooling token generate[/bold] then restart [bold]spooling mcp[/bold] to secure it.[/dim]")
+        console.print()
 
     display_name = name or f"port {port}"
     console.print(f"[bold]Starting tunnel for {display_name}...[/bold]")
 
     url = start_tunnel(port=port, name=name)
     if url:
-        # Print MCP config snippet for easy copy-paste
+        # Build MCP config snippet — include auth header when a token is set.
+        mcp_server_config: dict = {"type": "http", "url": f"{url}/mcp"}
+        if tok:
+            mcp_server_config["headers"] = {"Authorization": f"Bearer {tok}"}
+        snippet = _json.dumps({"mcpServers": {"spooling": mcp_server_config}}, indent=2)
         console.print()
         console.print("[dim]Add this to your MCP client config:[/dim]")
-        console.print(f'[bold]{{"mcpServers": {{"custom": {{"type": "http", "url": "{url}/mcp"}}}}}}[/bold]')
+        console.print(f"[bold]{snippet}[/bold]")
         console.print()
 
 
@@ -823,6 +845,91 @@ def ui():
 from spooling.cloud import cloud as _cloud_group, push as _push_cmd
 cli.add_command(_cloud_group)
 cli.add_command(_push_cmd)
+
+
+# ---------------------------------------------------------------------------
+# Token management
+# ---------------------------------------------------------------------------
+
+@cli.group()
+def token():
+    """Manage the MCP tunnel authentication token.
+
+    The token secures the public tunnel endpoint so only authorised clients
+    can query your sessions.  Generate it once, then restart the MCP server
+    to enforce it.
+
+    \b
+    Quick-start:
+      spooling token generate   # create & save a token
+      spooling mcp              # MCP server now requires the token
+      spooling tunnel           # shows the config snippet with the token
+    """
+
+
+@token.command("generate")
+@click.option("--force", "-f", is_flag=True, help="Replace an existing token without prompting.")
+def token_generate(force):
+    """Generate and save a new tunnel token.
+
+    Replaces any existing token.  Restart the MCP server afterwards so it
+    picks up the new value.
+    """
+    from spooling.tunnel_auth import generate_token, load_token, save_token
+
+    existing = load_token()
+    if existing and not force:
+        console.print("[yellow]A token already exists.[/yellow]  Use [bold]--force[/bold] to replace it, or [bold]spooling token show[/bold] to view it.")
+        return
+
+    tok = generate_token()
+    save_token(tok)
+    console.print()
+    console.print("[green]Token generated and saved.[/green]")
+    console.print()
+    console.print(f"  [bold cyan]Token:[/bold cyan] [bold]{tok}[/bold]")
+    console.print()
+    console.print("[dim]Next steps:[/dim]")
+    console.print("  1. Restart [bold]spooling mcp[/bold] so it enforces the token.")
+    console.print("  2. Run [bold]spooling tunnel[/bold] to get a ready-to-paste MCP config snippet.")
+    console.print()
+
+
+@token.command("show")
+def token_show():
+    """Print the current tunnel token."""
+    from spooling.tunnel_auth import load_token, TOKEN_ENV_VAR, _TOKEN_FILE
+
+    tok = load_token()
+    if not tok:
+        console.print("[yellow]No token configured.[/yellow]  Run [bold]spooling token generate[/bold] to create one.")
+        return
+
+    source = f"env var {TOKEN_ENV_VAR}" if __import__("os").environ.get(TOKEN_ENV_VAR) else str(_TOKEN_FILE)
+    console.print()
+    console.print(f"  [bold cyan]Token:[/bold cyan] [bold]{tok}[/bold]")
+    console.print(f"  [dim]Source: {source}[/dim]")
+    console.print()
+
+
+@token.command("rotate")
+def token_rotate():
+    """Generate a new token, replacing the current one.
+
+    Equivalent to [bold]spooling token generate --force[/bold].
+    Restart the MCP server afterwards.
+    """
+    from spooling.tunnel_auth import generate_token, save_token
+
+    tok = generate_token()
+    save_token(tok)
+    console.print()
+    console.print("[green]Token rotated.[/green]")
+    console.print()
+    console.print(f"  [bold cyan]New token:[/bold cyan] [bold]{tok}[/bold]")
+    console.print()
+    console.print("[dim]Restart [bold]spooling mcp[/bold] to enforce the new token.[/dim]")
+    console.print()
 
 
 if __name__ == "__main__":
