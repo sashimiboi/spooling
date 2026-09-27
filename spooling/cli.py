@@ -26,18 +26,17 @@ def cli():
 def init():
     """Check database connection and show provider status."""
     from spooling.db import check_db
-    from spooling.config import DATABASE_URL
     from spooling.providers import get_all_providers
 
     console.print(Panel("[bold]Spooling[/bold] - Session Tracker", style="blue"))
 
     # Check DB
+    from spooling.config import DB_PATH
     if check_db():
-        console.print("[green]Database connected[/green]")
+        console.print(f"[green]Database ready[/green] [dim]({DB_PATH})[/dim]")
     else:
-        console.print("[red]Cannot connect to database.[/red]")
-        console.print(f"  URL: {DATABASE_URL}")
-        console.print("  Run: [bold]docker compose up -d[/bold]")
+        console.print(f"[red]Cannot open database at {DB_PATH}.[/red]")
+        console.print("  Check that the directory is writable.")
         return
 
     # Check all providers
@@ -215,7 +214,14 @@ def stats(week, days, cloud_mode):
         table.add_column("Cost", justify="right")
         for r in overview["recent_sessions"]:
             proj = _clean_project(r["project"] or "")
-            ts = r["started_at"].strftime("%m/%d %H:%M") if r["started_at"] else ""
+            raw_ts = r["started_at"]
+            if raw_ts and isinstance(raw_ts, str):
+                from datetime import datetime as _dt
+                try:
+                    raw_ts = _dt.fromisoformat(raw_ts)
+                except ValueError:
+                    raw_ts = None
+            ts = raw_ts.strftime("%m/%d %H:%M") if raw_ts else ""
             title = (r["title"] or "")[:50]
             table.add_row(
                 ts, proj, title,

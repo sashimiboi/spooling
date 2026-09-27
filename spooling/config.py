@@ -1,32 +1,39 @@
 """Configuration for Spooling."""
 
 import os
+import sys
 from pathlib import Path
 
 # Legacy session data directory (JSONL-format sessions)
 SESSIONS_DIR = Path.home() / ".sessions"
 SESSIONS_PROJECTS_DIR = SESSIONS_DIR / "projects"
 
-# Snowflake Cortex Code data directory. Sessions live in
-# ~/.snowflake/cortex/conversations/<uuid>.history.jsonl with a sidecar
-# <uuid>.json carrying title, working_directory, git info, and timestamps.
+# Snowflake Cortex Code data directory.
 CORTEX_DIR = Path.home() / ".snowflake" / "cortex"
 CORTEX_CONVERSATIONS_DIR = CORTEX_DIR / "conversations"
 
 # opencode (sst/opencode) data directory. Single SQLite DB at
-# ~/.local/share/opencode/opencode.db with session/message/part tables
-# (Drizzle-managed). Parts carry the Vercel AI SDK UIMessage payload.
+# ~/.local/share/opencode/opencode.db
 OPENCODE_DIR = Path.home() / ".local" / "share" / "opencode"
 OPENCODE_DB = OPENCODE_DIR / "opencode.db"
 
-# Database
-DB_HOST = os.getenv("SPOOLING_DB_HOST", "localhost")
-DB_PORT = int(os.getenv("SPOOLING_DB_PORT", "5432"))
-DB_NAME = os.getenv("SPOOLING_DB_NAME", "spooling")
-DB_USER = os.getenv("SPOOLING_DB_USER", "spooling")
-DB_PASSWORD = os.getenv("SPOOLING_DB_PASSWORD", "spooling")
+# ---------------------------------------------------------------------------
+# SQLite database path
+# ---------------------------------------------------------------------------
+# XDG-style on Linux/macOS: ~/.local/share/spooling/spooling.db
+# Windows:                   %APPDATA%\spooling\spooling.db
+# Override with SPOOLING_DB env var.
 
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+def _default_db_path() -> Path:
+    if env := os.getenv("SPOOLING_DB"):
+        return Path(env)
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home()))
+    else:
+        base = Path.home() / ".local" / "share"
+    return base / "spooling" / "spooling.db"
+
+DB_PATH: Path = _default_db_path()
 
 # Embeddings
 EMBEDDING_MODEL = os.getenv("SPOOLING_EMBEDDING_MODEL", "all-MiniLM-L6-v2")

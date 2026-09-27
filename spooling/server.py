@@ -378,8 +378,10 @@ async def api_traces(
         clauses.append("t.session_id = %s")
         params.append(session_id)
     if since_days:
-        clauses.append("t.started_at >= now() - make_interval(days => %s)")
-        params.append(since_days)
+        from datetime import datetime, timedelta, timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
+        clauses.append("t.started_at >= %s")
+        params.append(cutoff)
     if vendor:
         clauses.append(
             "EXISTS (SELECT 1 FROM spans s WHERE s.trace_id = t.id AND s.vendor = %s)"
@@ -607,12 +609,14 @@ async def api_evals(
     elif passed == "null":
         clauses.append("e.passed IS NULL")
     if since_days:
-        clauses.append("e.run_at >= now() - make_interval(days => %s)")
-        params.append(since_days)
+        from datetime import datetime, timedelta, timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
+        clauses.append("e.run_at >= %s")
+        params.append(cutoff)
     if search:
         like = f"%{search}%"
         clauses.append(
-            "(e.trace_id ILIKE %s OR t.session_id ILIKE %s OR t.project ILIKE %s OR e.label ILIKE %s OR e.rationale ILIKE %s)"
+            "(e.trace_id LIKE %s OR t.session_id LIKE %s OR t.project LIKE %s OR e.label LIKE %s OR e.rationale LIKE %s)"
         )
         params.extend([like, like, like, like, like])
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
@@ -1336,8 +1340,8 @@ async def api_connectors_test(connector_id: str):
         slug = row.get("slug") or connector_id
         conn.execute(
             """UPDATE mcp_connectors
-               SET status = 'connected', last_error = NULL, last_checked_at = now(),
-                   tools_json = %s::jsonb, tool_count = %s, slug = COALESCE(slug, %s)
+               SET status = 'connected', last_error = NULL, last_checked_at = datetime('now'),
+                   tools_json = %s, tool_count = %s, slug = COALESCE(slug, %s)
                WHERE id = %s""",
             (_json.dumps(tools), len(tools), slug, connector_id),
         )

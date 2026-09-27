@@ -1,6 +1,7 @@
-"""Ingestion pipeline - parse AI coding sessions from multiple providers and store in pgvector."""
+"""Ingestion pipeline - parse AI coding sessions from multiple providers and store in SQLite."""
 
 import json
+import struct
 from pathlib import Path
 
 from rich.console import Console
@@ -236,27 +237,43 @@ def _store_trace(conn, trace: Trace):
     # still benefit, but sessions with zero llm_call cost keep their
     # existing chars/4 estimate untouched.
     if trace.session_id:
+        # SQLite-compatible correlated UPDATE: compute the span cost in a
+        # subquery and write it back only when it is positive.
         conn.execute(
-            """UPDATE sessions ss
-               SET estimated_cost_usd = sub.span_cost
-               FROM (
-                 SELECT t.session_id, SUM(s.cost_usd)::numeric(10, 4) AS span_cost
-                 FROM spans s JOIN traces t ON s.trace_id = t.id
-                 WHERE t.session_id = %s
+            """UPDATE sessions
+               SET estimated_cost_usd = (
+                 SELECT SUM(s.cost_usd)
+                 FROM spans s
+                 JOIN traces t ON s.trace_id = t.id
+                 WHERE t.session_id = sessions.id
                    AND s.kind = 'llm_call'
                    AND s.cost_usd IS NOT NULL
                    AND s.cost_usd > 0
                    AND s.model IS NOT NULL
                    AND s.model <> '<synthetic>'
-                 GROUP BY t.session_id
-               ) sub
-               WHERE ss.id = sub.session_id AND sub.span_cost > 0""",
+               )
+               WHERE id = %s
+               AND (
+                 SELECT COALESCE(SUM(s.cost_usd), 0)
+                 FROM spans s
+                 JOIN traces t ON s.trace_id = t.id
+                 WHERE t.session_id = sessions.id
+                   AND s.kind = 'llm_call'
+                   AND s.cost_usd > 0
+                   AND s.model IS NOT NULL
+                   AND s.model <> '<synthetic>'
+               ) > 0""",
             (trace.session_id,),
         )
 
 
+def _serialize_embedding(vec: list[float]) -> bytes:
+    """Pack a float list to a compact float32 BLOB for SQLite storage."""
+    return struct.pack(f"{len(vec)}f", *vec)
+
+
 def _embed_session(conn, session: ParsedSession):
-    """Chunk and embed session messages into pgvector."""
+    """Chunk and embed session messages, storing vectors as BLOBs."""
     # Delete existing chunks for this session (re-embed on update)
     conn.execute("DELETE FROM chunks WHERE session_id = %s", (session.session_id,))
 
@@ -286,11 +303,12 @@ def _embed_session(conn, session: ParsedSession):
     for chunk, vec, meta in zip(all_chunks, vectors, chunk_meta):
         conn.execute(
             """INSERT INTO chunks (session_id, message_id, content, role, project, timestamp, embedding)
-               VALUES (%s, %s, %s, %s, %s, %s, %s::vector)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
             (
                 meta["session_id"], meta["message_id"], chunk,
-                meta["role"], meta["project"], meta["timestamp"],
-                str(vec),
+                meta["role"], meta["project"],
+                meta["timestamp"].isoformat() if hasattr(meta["timestamp"], "isoformat") else meta["timestamp"],
+                _serialize_embedding(vec),
             ),
         )
 

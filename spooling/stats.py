@@ -5,10 +5,26 @@ from datetime import datetime, timedelta, timezone
 from spooling.db import get_connection
 
 
+def _days_ago(days: int) -> str:
+    """Return an ISO-8601 UTC string for `days` ago — used in WHERE clauses."""
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+def _months_ago(months: int) -> str:
+    """Return an ISO-8601 UTC string for the first day of the month N months ago."""
+    now = datetime.now(timezone.utc)
+    year = now.year
+    month = now.month - months
+    while month <= 0:
+        month += 12
+        year -= 1
+    return datetime(year, month, 1, tzinfo=timezone.utc).isoformat()
+
+
 def get_overview(provider: str | None = None) -> dict:
     """Get high-level usage stats, optionally filtered by provider."""
     conn = get_connection()
-    where = "WHERE provider_id = %s" if provider else ""
+    where = "WHERE provider_id = ?" if provider else ""
     params: tuple = (provider,) if provider else ()
 
     summary = conn.execute(
@@ -35,7 +51,7 @@ def get_overview(provider: str | None = None) -> dict:
 
     # Top tools
     tool_where = (
-        "WHERE tc.session_id IN (SELECT id FROM sessions WHERE provider_id = %s)"
+        "WHERE tc.session_id IN (SELECT id FROM sessions WHERE provider_id = ?)"
         if provider else ""
     )
     top_tools = conn.execute(
@@ -87,33 +103,33 @@ def get_provider_breakdown() -> list[dict]:
 def get_daily_stats(days: int = 7, provider: str | None = None) -> list[dict]:
     """Get daily usage breakdown, optionally filtered by provider."""
     conn = get_connection()
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = _days_ago(days)
 
     if provider:
         rows = conn.execute(
-            """SELECT DATE(started_at) AS day,
+            """SELECT date(started_at) AS day,
                       COUNT(*) AS sessions,
                       COALESCE(SUM(message_count), 0) AS messages,
                       COALESCE(SUM(tool_call_count), 0) AS tool_calls,
                       COALESCE(SUM(estimated_input_tokens + estimated_output_tokens), 0) AS total_tokens,
                       COALESCE(SUM(estimated_cost_usd), 0) AS cost
                FROM sessions
-               WHERE started_at >= %s AND provider_id = %s
-               GROUP BY DATE(started_at)
+               WHERE started_at >= ? AND provider_id = ?
+               GROUP BY date(started_at)
                ORDER BY day""",
             (cutoff, provider),
         ).fetchall()
     else:
         rows = conn.execute(
-            """SELECT DATE(started_at) AS day,
+            """SELECT date(started_at) AS day,
                       COUNT(*) AS sessions,
                       COALESCE(SUM(message_count), 0) AS messages,
                       COALESCE(SUM(tool_call_count), 0) AS tool_calls,
                       COALESCE(SUM(estimated_input_tokens + estimated_output_tokens), 0) AS total_tokens,
                       COALESCE(SUM(estimated_cost_usd), 0) AS cost
                FROM sessions
-               WHERE started_at >= %s
-               GROUP BY DATE(started_at)
+               WHERE started_at >= ?
+               GROUP BY date(started_at)
                ORDER BY day""",
             (cutoff,),
         ).fetchall()
@@ -126,21 +142,16 @@ def get_cost_summary(
     provider: str | None = None,
     days: int | None = None,
 ) -> dict:
-    """Aggregate cost broken down by input/output/cache components.
-
-    Uses the traces table (which carries per-input/output/cache token
-    counts) when available, falling back to the sessions table for
-    providers that don't emit traces.
-    """
+    """Aggregate cost broken down by input/output/cache components."""
     conn = get_connection()
     clauses: list[str] = []
     params: list = []
     if provider:
-        clauses.append("provider_id = %s")
+        clauses.append("provider_id = ?")
         params.append(provider)
     if days:
-        clauses.append("started_at >= now() - make_interval(days => %s)")
-        params.append(days)
+        clauses.append("started_at >= ?")
+        params.append(_days_ago(days))
 
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
 
@@ -182,16 +193,14 @@ def get_cost_summary(
     }
 
 
-def get_cost_by_provider(
-    days: int | None = None,
-) -> list[dict]:
+def get_cost_by_provider(days: int | None = None) -> list[dict]:
     """Cost broken down by provider, with per-component detail."""
     conn = get_connection()
     where = ""
     params: list = []
     if days:
-        where = "WHERE t.started_at >= now() - make_interval(days => %s)"
-        params.append(days)
+        where = "WHERE t.started_at >= ?"
+        params.append(_days_ago(days))
 
     rows = conn.execute(
         f"""SELECT
@@ -228,8 +237,8 @@ def get_cost_by_model(days: int | None = None) -> list[dict]:
     where = ""
     params: list = []
     if days:
-        where = "AND s.started_at >= now() - make_interval(days => %s)"
-        params.append(days)
+        where = f"AND s.started_at >= ?"
+        params.append(_days_ago(days))
 
     rows = conn.execute(
         f"""SELECT
@@ -257,8 +266,8 @@ def get_cost_by_project(days: int | None = None) -> list[dict]:
     where = ""
     params: list = []
     if days:
-        where = "WHERE started_at >= now() - make_interval(days => %s)"
-        params.append(days)
+        where = "WHERE started_at >= ?"
+        params.append(_days_ago(days))
 
     rows = conn.execute(
         f"""SELECT
@@ -280,32 +289,38 @@ def get_cost_by_project(days: int | None = None) -> list[dict]:
 def get_monthly_cost(months: int = 12) -> list[dict]:
     """Monthly cost aggregation for the last N months."""
     conn = get_connection()
+    cutoff = _months_ago(months)
     rows = conn.execute(
         """SELECT
-               DATE_TRUNC('month', started_at) AS month,
+               strftime('%Y-%m', started_at) AS month,
                COUNT(*) AS sessions,
                COALESCE(SUM(estimated_input_tokens + estimated_output_tokens), 0) AS total_tokens,
                COALESCE(SUM(estimated_cost_usd), 0) AS cost
            FROM sessions
-           WHERE started_at >= DATE_TRUNC('month', now()) - make_interval(months => %s)
-           GROUP BY DATE_TRUNC('month', started_at)
+           WHERE started_at >= ?
+           GROUP BY strftime('%Y-%m', started_at)
            ORDER BY month""",
-        (months,),
+        (cutoff,),
     ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    # Rehydrate 'month' as a date object so callers can do .strftime()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["month"] = datetime.strptime(d["month"], "%Y-%m")
+        except (TypeError, ValueError):
+            pass
+        out.append(d)
+    return out
 
 
 def get_session_cost_detail(session_id: str) -> dict | None:
-    """Detailed cost breakdown for a single session.
-
-    Returns session-level tokens/cost plus per-message token estimates
-    and a per-model rate breakdown from the trace spans.
-    """
+    """Detailed cost breakdown for a single session."""
     conn = get_connection()
 
     session = conn.execute(
-        "SELECT * FROM sessions WHERE id = %s", (session_id,)
+        "SELECT * FROM sessions WHERE id = ?", (session_id,)
     ).fetchone()
     if not session:
         conn.close()
@@ -315,13 +330,13 @@ def get_session_cost_detail(session_id: str) -> dict | None:
         """SELECT t.id, t.total_input_tokens, t.total_output_tokens,
                   t.total_cache_read_tokens, t.total_cache_write_tokens,
                   t.total_cost_usd, t.model
-           FROM traces t WHERE t.session_id = %s""",
+           FROM traces t WHERE t.session_id = ?""",
         (session_id,),
     ).fetchone()
 
     messages = conn.execute(
         """SELECT role, estimated_tokens, timestamp
-           FROM messages WHERE session_id = %s ORDER BY timestamp""",
+           FROM messages WHERE session_id = ? ORDER BY timestamp""",
         (session_id,),
     ).fetchall()
 
@@ -331,7 +346,7 @@ def get_session_cost_detail(session_id: str) -> dict | None:
             """SELECT model, input_tokens, output_tokens,
                       cache_read_tokens, cache_write_tokens, cost_usd
                FROM spans
-               WHERE trace_id = %s AND kind = 'llm_call'
+               WHERE trace_id = ? AND kind = 'llm_call'
                ORDER BY sequence""",
             (trace["id"],),
         ).fetchall()
@@ -373,21 +388,17 @@ def recalc_cost(
     provider: str | None = None,
     dry_run: bool = True,
 ) -> dict:
-    """Re-price sessions/traces against current LiteLLM rate table.
-
-    Returns summary of what *would* change. Pass ``dry_run=False`` to
-    actually update rows.
-    """
+    """Re-price sessions/traces against current LiteLLM rate table."""
     from spooling.pricing import get_rates
 
     conn = get_connection()
-    clauses = ["TRUE"]
+    clauses = ["1=1"]
     params: list = []
     if session_id:
-        clauses.append("s.id = %s")
+        clauses.append("s.id = ?")
         params.append(session_id)
     if provider:
-        clauses.append("s.provider_id = %s")
+        clauses.append("s.provider_id = ?")
         params.append(provider)
 
     where = "WHERE " + " AND ".join(clauses)
@@ -432,15 +443,15 @@ def recalc_cost(
 
         if not dry_run:
             conn.execute(
-                "UPDATE sessions SET estimated_cost_usd = %s WHERE id = %s",
+                "UPDATE sessions SET estimated_cost_usd = ? WHERE id = ?",
                 (round(new_cost, 6), s["id"]),
             )
 
-    # Also recalc trace costs
-    trace_where = "TRUE"
+    # Recalc trace costs
+    trace_clauses = ["1=1"]
     trace_params: list = []
     if session_id:
-        trace_where = "t.session_id = %s"
+        trace_clauses.append("t.session_id = ?")
         trace_params.append(session_id)
 
     traces = conn.execute(
@@ -448,7 +459,7 @@ def recalc_cost(
                    t.total_input_tokens, t.total_output_tokens,
                    t.total_cache_read_tokens, t.total_cache_write_tokens,
                    t.total_cost_usd
-            FROM traces t WHERE {trace_where}""",
+            FROM traces t WHERE {" AND ".join(trace_clauses)}""",
         tuple(trace_params),
     ).fetchall()
 
@@ -483,7 +494,7 @@ def recalc_cost(
 
         if not dry_run:
             conn.execute(
-                "UPDATE traces SET total_cost_usd = %s WHERE id = %s",
+                "UPDATE traces SET total_cost_usd = ? WHERE id = ?",
                 (round(new_cost, 6), tr["id"]),
             )
 
@@ -510,7 +521,7 @@ def get_session_detail(session_id: str) -> dict | None:
     conn = get_connection()
 
     session = conn.execute(
-        "SELECT * FROM sessions WHERE id = %s", (session_id,)
+        "SELECT * FROM sessions WHERE id = ?", (session_id,)
     ).fetchone()
 
     if not session:
@@ -519,19 +530,19 @@ def get_session_detail(session_id: str) -> dict | None:
 
     messages = conn.execute(
         """SELECT id, role, content, timestamp, tools_used, estimated_tokens
-           FROM messages WHERE session_id = %s ORDER BY timestamp""",
+           FROM messages WHERE session_id = ? ORDER BY timestamp""",
         (session_id,),
     ).fetchall()
 
     tool_calls_rows = conn.execute(
         """SELECT message_id, tool_name, tool_input, tool_result_preview
-           FROM tool_calls WHERE session_id = %s ORDER BY id""",
+           FROM tool_calls WHERE session_id = ? ORDER BY id""",
         (session_id,),
     ).fetchall()
 
     tool_summary = conn.execute(
         """SELECT tool_name, COUNT(*) AS uses
-           FROM tool_calls WHERE session_id = %s
+           FROM tool_calls WHERE session_id = ?
            GROUP BY tool_name ORDER BY uses DESC""",
         (session_id,),
     ).fetchall()
