@@ -14,6 +14,7 @@ codebase to their SQLite equivalents at query time:
 
 import re
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
 
 from spooling.config import DB_PATH
@@ -29,6 +30,7 @@ _CAST_RE = re.compile(r"::\w+")
 _ILIKE_RE = re.compile(r"\bILIKE\b", re.IGNORECASE)
 
 
+@lru_cache(maxsize=512)
 def _adapt_sql(sql: str) -> str:
     """Translate PostgreSQL SQL idioms → SQLite equivalents."""
     sql = _PLACEHOLDER_RE.sub("?", sql)
@@ -148,6 +150,8 @@ def get_connection() -> SpoolingConnection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     raw = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     raw.execute("PRAGMA journal_mode=WAL")
+    raw.execute("PRAGMA synchronous=NORMAL")   # safe with WAL; much faster than FULL
+    raw.execute("PRAGMA cache_size=-32000")    # 32 MB page cache
     raw.execute("PRAGMA foreign_keys=ON")
     _ensure_schema(raw)
     return SpoolingConnection(raw)

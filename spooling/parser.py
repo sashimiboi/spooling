@@ -95,8 +95,13 @@ def _summarize_tool_input(name: str, inp: dict) -> str:
         path = inp.get("file_path", "")
         offset = inp.get("offset")
         limit = inp.get("limit")
-        if offset and limit:
-            return f"{path}:{offset}-{offset + limit}"
+        if offset is not None and limit is not None:
+            try:
+                offset = int(offset[0]) if isinstance(offset, list) else int(offset)
+                limit = int(limit[0]) if isinstance(limit, list) else int(limit)
+                return f"{path}:{offset}-{offset + limit}"
+            except (TypeError, ValueError, IndexError):
+                pass
         return path
     if name in ("Edit", "Write"):
         return inp.get("file_path", "")

@@ -92,42 +92,52 @@ def _store_session(conn, session: ParsedSession):
         ),
     )
 
-    # Upsert messages
+    # Batch-upsert messages and tool calls
+    msg_rows = []
+    tool_rows_full = []
+    tool_rows_simple = []
     for msg in session.messages:
         if not msg.uuid:
             continue
-        conn.execute(
+        msg_rows.append((
+            msg.uuid, session.session_id, msg.role, _scrub(msg.content),
+            msg.timestamp, json.dumps(msg.tools_used), _scrub(msg.cwd),
+            _scrub(msg.git_branch), msg.estimated_tokens,
+        ))
+        if getattr(msg, "tool_details", None):
+            for td in msg.tool_details:
+                tool_rows_full.append((
+                    session.session_id, msg.uuid, _scrub(td.name),
+                    _scrub(td.input_summary),
+                    _scrub(td.result_preview) or None,
+                    msg.timestamp,
+                ))
+        else:
+            for tool_name in msg.tools_used:
+                tool_rows_simple.append((
+                    session.session_id, msg.uuid, _scrub(tool_name), msg.timestamp,
+                ))
+
+    if msg_rows:
+        conn.executemany(
             """INSERT INTO messages (id, session_id, role, content, timestamp, tools_used,
                cwd, git_branch, estimated_tokens)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (id) DO NOTHING""",
-            (
-                msg.uuid, session.session_id, msg.role, _scrub(msg.content),
-                msg.timestamp, json.dumps(msg.tools_used), _scrub(msg.cwd),
-                _scrub(msg.git_branch), msg.estimated_tokens,
-            ),
+            msg_rows,
         )
-
-        # Store tool calls (with rich details when available).
-        if getattr(msg, "tool_details", None):
-            for td in msg.tool_details:
-                conn.execute(
-                    """INSERT INTO tool_calls (session_id, message_id, tool_name, tool_input, tool_result_preview, timestamp)
-                       VALUES (%s, %s, %s, %s, %s, %s)""",
-                    (
-                        session.session_id, msg.uuid, _scrub(td.name),
-                        _scrub(td.input_summary),
-                        _scrub(td.result_preview) or None,
-                        msg.timestamp,
-                    ),
-                )
-        else:
-            for tool_name in msg.tools_used:
-                conn.execute(
-                    """INSERT INTO tool_calls (session_id, message_id, tool_name, timestamp)
-                       VALUES (%s, %s, %s, %s)""",
-                    (session.session_id, msg.uuid, _scrub(tool_name), msg.timestamp),
-                )
+    if tool_rows_full:
+        conn.executemany(
+            """INSERT INTO tool_calls (session_id, message_id, tool_name, tool_input, tool_result_preview, timestamp)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            tool_rows_full,
+        )
+    if tool_rows_simple:
+        conn.executemany(
+            """INSERT INTO tool_calls (session_id, message_id, tool_name, timestamp)
+               VALUES (%s, %s, %s, %s)""",
+            tool_rows_simple,
+        )
 
 
 def _store_trace(conn, trace: Trace):
@@ -195,9 +205,26 @@ def _store_trace(conn, trace: Trace):
         ),
     )
 
-    # Insert spans in sequence order so parent rows always exist first.
-    for span in sorted(trace.spans, key=lambda s: s.sequence):
-        conn.execute(
+    # Batch-insert spans (already in sequence order by construction) and events.
+    span_rows = []
+    event_rows = []
+    for span in trace.spans:
+        span_rows.append((
+            span.id, span.trace_id, span.parent_id, span.kind.value, _scrub(span.name), span.status.value,
+            span.started_at, span.ended_at, span.duration_ms, span.depth, span.sequence,
+            span.input_tokens, span.output_tokens, span.cache_read_tokens, span.cache_write_tokens,
+            span.cost_usd, span.model, _scrub(span.tool_name),
+            json.dumps(span.tool_input, default=str) if span.tool_input is not None else None,
+            _scrub(span.tool_output), span.tool_is_error,
+            _scrub(span.agent_type), _scrub(span.agent_prompt),
+            _scrub(span.vendor), _scrub(span.category),
+            json.dumps(span.attrs or {}, default=str),
+        ))
+        for ev in span.events:
+            event_rows.append((span.id, trace.id, ev.name, ev.timestamp, json.dumps(ev.attrs or {})))
+
+    if span_rows:
+        conn.executemany(
             """INSERT INTO spans (
                 id, trace_id, parent_id, kind, name, status,
                 started_at, ended_at, duration_ms, depth, sequence,
@@ -205,27 +232,15 @@ def _store_trace(conn, trace: Trace):
                 cost_usd, model, tool_name, tool_input, tool_output, tool_is_error,
                 agent_type, agent_prompt, vendor, category, attrs
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                span.id, span.trace_id, span.parent_id, span.kind.value, _scrub(span.name), span.status.value,
-                span.started_at, span.ended_at, span.duration_ms, span.depth, span.sequence,
-                span.input_tokens, span.output_tokens, span.cache_read_tokens, span.cache_write_tokens,
-                span.cost_usd, span.model, _scrub(span.tool_name),
-                json.dumps(span.tool_input, default=str) if span.tool_input is not None else None,
-                _scrub(span.tool_output), span.tool_is_error,
-                _scrub(span.agent_type), _scrub(span.agent_prompt),
-                _scrub(span.vendor), _scrub(span.category),
-                json.dumps(span.attrs or {}, default=str),
-            ),
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            span_rows,
         )
-
-        for ev in span.events:
-            conn.execute(
-                """INSERT INTO span_events (span_id, trace_id, name, timestamp, attrs)
-                   VALUES (%s, %s, %s, %s, %s)""",
-                (span.id, trace.id, ev.name, ev.timestamp, json.dumps(ev.attrs or {})),
-            )
+    if event_rows:
+        conn.executemany(
+            """INSERT INTO span_events (span_id, trace_id, name, timestamp, attrs)
+               VALUES (%s, %s, %s, %s, %s)""",
+            event_rows,
+        )
 
     # After spans land, sync the session's headline cost to the sum of its
     # llm_call span costs. Span cost is computed from real per-turn usage
@@ -272,19 +287,14 @@ def _serialize_embedding(vec: list[float]) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec)
 
 
-def _embed_session(conn, session: ParsedSession):
-    """Chunk and embed session messages, storing vectors as BLOBs."""
-    # Delete existing chunks for this session (re-embed on update)
-    conn.execute("DELETE FROM chunks WHERE session_id = %s", (session.session_id,))
-
-    all_chunks = []
-    chunk_meta = []
-
+def _collect_session_chunks(session: ParsedSession) -> tuple[list[str], list[dict]]:
+    """Collect all text chunks and their metadata for a session (no embedding)."""
+    all_chunks: list[str] = []
+    chunk_meta: list[dict] = []
     for msg in session.messages:
         if not msg.content.strip():
             continue
-        chunks = chunk_text(msg.content)
-        for chunk in chunks:
+        for chunk in chunk_text(msg.content):
             all_chunks.append(chunk)
             chunk_meta.append({
                 "session_id": session.session_id,
@@ -293,25 +303,36 @@ def _embed_session(conn, session: ParsedSession):
                 "project": session.project,
                 "timestamp": msg.timestamp,
             })
+    return all_chunks, chunk_meta
 
-    if not all_chunks:
-        return 0
 
-    # Batch embed
-    vectors = embed_texts(all_chunks)
-
-    for chunk, vec, meta in zip(all_chunks, vectors, chunk_meta):
-        conn.execute(
+def _write_chunk_rows(conn, all_chunks: list[str], vectors, chunk_meta: list[dict]) -> None:
+    """Write pre-embedded chunks to the DB using executemany."""
+    rows = [
+        (
+            meta["session_id"], meta["message_id"], chunk,
+            meta["role"], meta["project"],
+            meta["timestamp"].isoformat() if hasattr(meta["timestamp"], "isoformat") else meta["timestamp"],
+            _serialize_embedding(vec),
+        )
+        for chunk, vec, meta in zip(all_chunks, vectors, chunk_meta)
+    ]
+    if rows:
+        conn.executemany(
             """INSERT INTO chunks (session_id, message_id, content, role, project, timestamp, embedding)
                VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-            (
-                meta["session_id"], meta["message_id"], chunk,
-                meta["role"], meta["project"],
-                meta["timestamp"].isoformat() if hasattr(meta["timestamp"], "isoformat") else meta["timestamp"],
-                _serialize_embedding(vec),
-            ),
+            rows,
         )
 
+
+def _embed_session(conn, session: ParsedSession):
+    """Chunk and embed session messages, storing vectors as BLOBs."""
+    conn.execute("DELETE FROM chunks WHERE session_id = %s", (session.session_id,))
+    all_chunks, chunk_meta = _collect_session_chunks(session)
+    if not all_chunks:
+        return 0
+    vectors = embed_texts(all_chunks)
+    _write_chunk_rows(conn, all_chunks, vectors, chunk_meta)
     return len(all_chunks)
 
 
@@ -454,6 +475,10 @@ def sync(embed: bool = True, provider_filter: str | None = None):
         total_chunks = 0
         total_sessions = 0
 
+        # Process files in batches: parse+store all, then embed all at once.
+        # One model.encode() call per batch instead of one per session.
+        _EMBED_BATCH = 20
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -463,22 +488,40 @@ def sync(embed: bool = True, provider_filter: str | None = None):
         ) as progress:
             task = progress.add_task(f"Syncing {provider.name}...", total=len(to_process))
 
-            for f in to_process:
-                sessions = provider.parse_session_file(f)
-                for session in sessions:
-                    _store_session(conn, session)
-                    if session.trace is not None:
-                        _store_trace(conn, session.trace)
-                    total_messages += session.message_count
-                    total_sessions += 1
+            for batch_start in range(0, len(to_process), _EMBED_BATCH):
+                batch_files = to_process[batch_start : batch_start + _EMBED_BATCH]
+                batch_sessions: list[tuple] = []  # (file, [sessions])
 
-                    if embed:
-                        chunks = _embed_session(conn, session)
-                        total_chunks += chunks
+                for f in batch_files:
+                    sessions = provider.parse_session_file(f)
+                    for session in sessions:
+                        _store_session(conn, session)
+                        if session.trace is not None:
+                            _store_trace(conn, session.trace)
+                        total_messages += session.message_count
+                        total_sessions += 1
+                    batch_sessions.append((f, sessions))
+                    progress.advance(task)
 
-                _mark_synced(conn, str(f), f.stat().st_size, prov_info["type"])
+                if embed:
+                    # Collect chunks from every session in the batch, then embed once.
+                    all_chunks: list[str] = []
+                    all_metas: list[dict] = []
+                    for _f, sessions in batch_sessions:
+                        for session in sessions:
+                            conn.execute("DELETE FROM chunks WHERE session_id = %s", (session.session_id,))
+                            c, m = _collect_session_chunks(session)
+                            all_chunks.extend(c)
+                            all_metas.extend(m)
+
+                    if all_chunks:
+                        vectors = embed_texts(all_chunks)
+                        _write_chunk_rows(conn, all_chunks, vectors, all_metas)
+                        total_chunks += len(all_chunks)
+
+                for f, _ in batch_sessions:
+                    _mark_synced(conn, str(f), f.stat().st_size, prov_info["type"])
                 conn.commit()
-                progress.advance(task)
 
         # Update provider stats
         conn.execute(
