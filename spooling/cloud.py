@@ -23,6 +23,15 @@ _MAX_TITLE = 4096
 _MAX_SPAN_NAME = 512
 
 
+def _to_iso(val) -> str | None:
+    """Return an ISO-format string for *val*, whether it's already a str or a datetime."""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val
+    return val.isoformat()
+
+
 def _clean_str(raw: str | None, max_len: int) -> str | None:
     if not raw:
         return raw
@@ -179,8 +188,8 @@ the agent was launched from the home dir so the cwd
                 "project": r["project"],
                 "title": _clean_str(r["title"], _MAX_TITLE),
                 "cwd": r["cwd"],
-                "started_at": r["started_at"].isoformat() if r["started_at"] else None,
-                "ended_at": r["ended_at"].isoformat() if r["ended_at"] else None,
+                "started_at": _to_iso(r["started_at"]),
+                "ended_at": _to_iso(r["ended_at"]),
                 "message_count": r["message_count"] or 0,
                 "tool_call_count": r["tool_call_count"] or 0,
                 "input_tokens": r["estimated_input_tokens"] or 0,
@@ -192,7 +201,7 @@ the agent was launched from the home dir so the cwd
                         "role": m["role"],
                         "content": (m["content"] or "")[:20000],
                         "sequence": int(m["seq"]),
-                        "timestamp": m["timestamp"].isoformat() if m["timestamp"] else None,
+                        "timestamp": _to_iso(m["timestamp"]),
                     }
                     for m in msgs
                 ],

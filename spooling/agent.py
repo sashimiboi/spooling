@@ -156,7 +156,7 @@ def _build_context(query: str) -> dict:
         context_parts.append("## Recent sessions")
         for r in recent:
             title = (r["title"] or "")[:60]
-            started = r["started_at"].isoformat()[:10] if r["started_at"] else ""
+            started = (r["started_at"] if isinstance(r["started_at"], str) else r["started_at"].isoformat())[:10] if r["started_at"] else ""
             context_parts.append(
                 f"- [{r['id']}] {r['provider_id']} {r['project'] or ''} {started}: {title}"
             )
@@ -508,7 +508,7 @@ async def chat_stream(
         context_parts.append("## Recent sessions")
         for r in recent:
             title = (r["title"] or "")[:60]
-            started = r["started_at"].isoformat()[:10] if r["started_at"] else ""
+            started = (r["started_at"] if isinstance(r["started_at"], str) else r["started_at"].isoformat())[:10] if r["started_at"] else ""
             context_parts.append(
                 f"- [{r['id']}] {r['provider_id']} {r['project'] or ''} {started}: {title}"
             )
