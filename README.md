@@ -2,7 +2,7 @@
 
 Local session tracker and semantic search for AI coding assistants.
 
-Track your AI coding sessions across **OpenAI Codex CLI**, **GitHub Copilot**, **Cursor**, **Windsurf**, **Kiro**, **Google Antigravity**, and **opencode**, all in one place. Get usage stats, cost estimates, per-provider breakdowns, semantic search via pgvector, and a built-in AI chat agent to explore your history.
+Track your AI coding sessions across **OpenAI Codex CLI**, **GitHub Copilot**, **Cursor**, **Windsurf**, **Kiro**, **Google Antigravity**, and **opencode**, all in one place. Get usage stats, cost estimates, per-provider breakdowns, semantic search, and a built-in AI chat agent to explore your history.
 
 **Website:** [spooling.ai](https://spooling.ai)
 
@@ -11,10 +11,10 @@ Track your AI coding sessions across **OpenAI Codex CLI**, **GitHub Copilot**, *
 ## Prerequisites
 
 - **Python 3.11+**
-- **Node.js 18+**
-- **Docker** (for PostgreSQL + pgvector)
 - **pipx** or **uv** (optional, alternative install methods)
 - **Ollama** (optional, for free local AI chat) or an **Anthropic API key**
+
+No Docker, no PostgreSQL, no Node.js required.
 
 ---
 
@@ -22,56 +22,39 @@ Track your AI coding sessions across **OpenAI Codex CLI**, **GitHub Copilot**, *
 
 **Four commands. Zero cloud.**
 
-### 01 &nbsp; Clone & start the database
+### 01 &nbsp; Install
 
 ```bash
-git clone https://github.com/sashimiboi/spooling && cd spooling
-docker compose up -d   # postgres + pgvector :5434
-```
+# pip
+pip install spooling
 
-### 02 &nbsp; Install backend + UI
-
-Choose one:
-
-```bash
-# pip (recommended)
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
-
-# pipx
-pipx install .
+# pipx (recommended — keeps it isolated)
+pipx install spooling
 
 # uv
-uv sync
+uv tool install spooling
 ```
 
-Then install the UI:
-
-```bash
-cd ui && npm install && cd ..
-```
-
-### 03 &nbsp; Detect providers & sync
+### 02 &nbsp; Detect providers & sync
 
 ```bash
 spooling init      # scan for available providers
-spooling sync      # embed every session into pgvector
+spooling sync      # embed every session for semantic search
 ```
 
-### 04 &nbsp; Search & explore
+### 03 &nbsp; Search & explore
 
 ```bash
-spooling ui        # API :3002 · MCP :3004 · GUI :3003
 spooling search "that redis race condition"
+spooling stats
+spooling mcp       # MCP server at http://127.0.0.1:3004/mcp
 ```
-
-Open **http://localhost:3003** and you're in.
 
 ---
 
 ## Connect Spooling to your AI coding agent
 
-`spooling ui` automatically exposes an MCP server at `http://127.0.0.1:3004/mcp` (HTTP streamable transport). Any MCP-speaking agent can connect to it and pull context from your local KB mid-conversation. The agent gets tools like `spooling_search`, `spooling_recent_sessions`, `spooling_get_session`, `spooling_workspace_stats`, and `spooling_top_projects`.
+`spooling mcp` exposes an MCP server at `http://127.0.0.1:3004/mcp` (HTTP streamable transport). Any MCP-speaking agent can connect to it and pull context from your local KB mid-conversation. The agent gets tools like `spooling_search`, `spooling_recent_sessions`, `spooling_get_session`, `spooling_workspace_stats`, and `spooling_top_projects`.
 
 ### Cursor / Windsurf / Codex / Antigravity
 
@@ -104,12 +87,6 @@ Should return the five `spool_*` tools. If you get "connection refused", `spooli
 
 ## CLI Usage
 
-All CLI commands require the venv to be active and the database running.
-
-```bash
-source .venv/bin/activate
-```
-
 ### `spooling init`
 
 Check database connection and show which AI coding tool providers are detected on your system. This scans default paths for Codex CLI, GitHub Copilot, Cursor, and Windsurf session data.
@@ -120,7 +97,7 @@ spooling init
 
 ### `spooling sync`
 
-Parse and ingest sessions from all connected providers into the database. Chunks and embeds message content into pgvector for semantic search.
+Parse and ingest sessions from all connected providers into the local database. Chunks and embeds message content for semantic search.
 
 ```bash
 spooling sync                      # Full sync with embeddings
@@ -163,7 +140,7 @@ spooling watch
 
 ### `spooling serve`
 
-Start the API server only (for when you want to run the GUI separately).
+Start the API server.
 
 ```bash
 spooling serve                    # Default: http://127.0.0.1:3002
@@ -173,10 +150,10 @@ spooling serve --host 0.0.0.0     # Bind to all interfaces
 
 ### `spooling ui`
 
-Start the API server, the MCP HTTP server, and the Next.js UI together.
+Start the API server, the MCP HTTP server, and the Next.js UI together. Requires the `ui/` directory from the [source repo](https://github.com/sashimiboi/spooling) to be present. Set `SPOOLING_UI_DIR` to point at it if running from a non-standard location.
 
 ```bash
-spooling ui
+spooling ui        # API :3002 · MCP :3004 · GUI :3003
 ```
 
 ### `spooling mcp`
@@ -487,7 +464,7 @@ Or use `spooling ui` to start both at once.
 
 ## Chat Agent Setup
 
-The chat page lets you ask questions about your coding sessions in natural language. It uses RAG - retrieves relevant context from pgvector before answering.
+The chat page lets you ask questions about your coding sessions in natural language. It uses RAG — retrieves relevant context from the local database before answering.
 
 ### Option A: Ollama (free, local)
 
@@ -516,24 +493,23 @@ Available models: Sonnet, Haiku, Opus.
 
 ```
 spooling/
-├── docker-compose.yml       # PostgreSQL + pgvector
-├── init.sql                 # Database schema
 ├── pyproject.toml           # Python package config
-├── spooling/                   # Python backend
+├── spooling/                # Python backend
 │   ├── cli.py               # Click CLI
 │   ├── config.py            # Configuration
-│   ├── db.py                # Database connection
-│   ├── providers/           # Provider plugins (codex, copilot, cursor, windsurf)
+│   ├── db.py                # SQLite connection (PostgreSQL shim)
+│   ├── schema.py            # SQLite schema DDL
+│   ├── providers/           # Provider plugins (codex, copilot, cursor, windsurf, ...)
 │   ├── parser.py            # Session JSONL parser
 │   ├── embeddings.py        # sentence-transformers (all-MiniLM-L6-v2)
 │   ├── ingest.py            # Sync pipeline
-│   ├── search.py            # pgvector semantic search
+│   ├── search.py            # Numpy cosine similarity search
 │   ├── stats.py             # Usage statistics
 │   ├── watcher.py           # File watcher (watchdog)
 │   ├── agent.py             # Chat agent (Ollama + Anthropic)
 │   ├── tunnel.py            # Cloudflare quick tunnel support
 │   └── server.py            # FastAPI API server
-└── ui/                      # Next.js frontend
+└── ui/                      # Next.js frontend (source repo only)
     ├── next.config.js       # API proxy to :3002
     └── src/
         ├── components/      # shadcn/ui components
@@ -545,8 +521,9 @@ spooling/
 
 | Layer | Technology |
 |-------|-----------|
-| Database | PostgreSQL 16 + pgvector (Docker) |
+| Database | SQLite (no external dependencies) |
 | Embeddings | sentence-transformers / all-MiniLM-L6-v2 (local) |
+| Search | numpy cosine similarity |
 | Backend | Python, FastAPI, Click |
 | Frontend | Next.js 14, shadcn/ui, Tailwind CSS, AG Charts |
 | Chat AI | Ollama (local) or Anthropic API |
@@ -555,7 +532,6 @@ spooling/
 
 | Service | Port |
 |---------|------|
-| PostgreSQL | 5434 |
 | API Server | 3002 |
 | GUI | 3003 |
 | MCP Server (streamable-HTTP) | 3004 |
@@ -564,19 +540,16 @@ spooling/
 
 ## Environment Variables
 
-All optional - defaults work out of the box for local development.
+All optional — defaults work out of the box.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SPOOLING_DB_HOST` | `localhost` | Database host |
-| `SPOOLING_DB_PORT` | `5434` | Database port |
-| `SPOOLING_DB_NAME` | `spooling` | Database name |
-| `SPOOLING_DB_USER` | `spooling` | Database user |
-| `SPOOLING_DB_PASSWORD` | `spooling` | Database password |
+| `SPOOLING_DB` | `~/.local/share/spooling/spooling.db` | Path to the SQLite database file (`%APPDATA%\spooling\spooling.db` on Windows) |
 | `SPOOLING_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Sentence transformer model |
 | `SPOOLING_UI_HOST` | `127.0.0.1` | API server host |
-| `ANTHROPIC_API_KEY` | - | Anthropic API key (alternative to setting in UI) |
-| `API_URL` | `http://127.0.0.1:3002` | Backend API URL for Next.js rewrites (`/api/*`→`<API_URL>/api/*`). Set to `https://api.spooling.ai` in production. |
+| `SPOOLING_UI_PORT` | `3001` | API server port (used by `spooling serve`) |
+| `SPOOLING_UI_DIR` | *(auto-detected)* | Path to the Next.js `ui/` directory (required for `spooling ui`) |
+| `ANTHROPIC_API_KEY` | - | Anthropic API key (alternative to setting in the GUI) |
 
 ---
 
