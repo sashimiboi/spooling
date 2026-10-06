@@ -1,0 +1,21 @@
+# dependencies
+node_modules/
+
+# next.js build output
+.next/
+out/
+
+# env files — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# uploads
+public/uploads/
+
+# typescript
+*.tsbuildinfo
+
+# misc
+.DS_Store
+*.pem
