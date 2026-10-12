@@ -221,6 +221,14 @@ def _collect_traces(session_ids: list[str]) -> list[dict]:
     """
     if not session_ids:
         return []
+
+    def _ts(v) -> str | None:
+        """Return an ISO-8601 string regardless of whether v is a datetime or str."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        return v.isoformat()
     conn = get_connection()
     try:
         placeholders = ", ".join(["%s"] * len(session_ids))
@@ -262,8 +270,8 @@ def _collect_traces(session_ids: list[str]) -> list[dict]:
                     "kind": s["kind"],
                     "name": _clean_str(s["name"], _MAX_SPAN_NAME),
                     "status": s["status"] or "ok",
-                    "started_at": s["started_at"].isoformat() if s["started_at"] else None,
-                    "ended_at": s["ended_at"].isoformat() if s["ended_at"] else None,
+                    "started_at": _ts(s["started_at"]),
+                    "ended_at": _ts(s["ended_at"]),
                     "duration_ms": int(s["duration_ms"] or 0),
                     "depth": int(s["depth"] or 0),
                     "sequence": int(s["sequence"] or 0),
@@ -285,7 +293,7 @@ def _collect_traces(session_ids: list[str]) -> list[dict]:
                     "events": [
                         {
                             "name": e["name"],
-                            "timestamp": e["timestamp"].isoformat() if e["timestamp"] else None,
+                            "timestamp": _ts(e["timestamp"]),
                             "attrs": e["attrs"] or {},
                         }
                         for e in events
@@ -298,8 +306,8 @@ def _collect_traces(session_ids: list[str]) -> list[dict]:
                 "provider_id": t["provider_id"],
                 "project": t["project"],
                 "title": _clean_str(t["title"], _MAX_TITLE),
-                "started_at": t["started_at"].isoformat() if t["started_at"] else None,
-                "ended_at": t["ended_at"].isoformat() if t["ended_at"] else None,
+                "started_at": _ts(t["started_at"]),
+                "ended_at": _ts(t["ended_at"]),
                 "duration_ms": int(t["duration_ms"] or 0),
                 "span_count": int(t["span_count"] or 0),
                 "agent_count": int(t["agent_count"] or 0),
