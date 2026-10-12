@@ -229,6 +229,18 @@ def _collect_traces(session_ids: list[str]) -> list[dict]:
         if isinstance(v, str):
             return v
         return v.isoformat()
+
+    def _json(v, default):
+        """Return a parsed object regardless of whether v is already parsed or a JSON string."""
+        if v is None:
+            return default
+        if isinstance(v, str):
+            import json as _json_mod
+            try:
+                return _json_mod.loads(v)
+            except Exception:
+                return default
+        return v
     conn = get_connection()
     try:
         placeholders = ", ".join(["%s"] * len(session_ids))
@@ -282,19 +294,19 @@ def _collect_traces(session_ids: list[str]) -> list[dict]:
                     "cost_usd": float(s["cost_usd"] or 0),
                     "model": s["model"],
                     "tool_name": s["tool_name"],
-                    "tool_input": s["tool_input"],
+                    "tool_input": _json(s["tool_input"], None),
                     "tool_output": (s["tool_output"] or "")[:200000] if s["tool_output"] else None,
                     "tool_is_error": bool(s["tool_is_error"]),
                     "agent_type": s["agent_type"],
                     "agent_prompt": (s["agent_prompt"] or "")[:200000] if s["agent_prompt"] else None,
                     "vendor": s["vendor"],
                     "category": s["category"],
-                    "attrs": s["attrs"] or {},
+                    "attrs": _json(s["attrs"], {}),
                     "events": [
                         {
                             "name": e["name"],
                             "timestamp": _ts(e["timestamp"]),
-                            "attrs": e["attrs"] or {},
+                            "attrs": _json(e["attrs"], {}),
                         }
                         for e in events
                     ],
@@ -323,8 +335,8 @@ def _collect_traces(session_ids: list[str]) -> list[dict]:
                 "git_branch": t["git_branch"],
                 "model": t["model"],
                 "vendor_count": int(t["vendor_count"] or 0),
-                "top_vendors": t["top_vendors"] or [],
-                "attrs": t["attrs"] or {},
+                "top_vendors": _json(t["top_vendors"], []),
+                "attrs": _json(t["attrs"], {}),
                 "spans": spans_payload,
             })
         return out
