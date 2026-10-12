@@ -318,6 +318,39 @@ def otel_ingest(path, provider_id, project):
         raise SystemExit(1)
 
 
+@otel.command("preview")
+@click.option("--file", "path", required=True, type=click.Path(exists=True), help="OTLP JSON export file")
+@click.option("--provider", "provider_id", default="otel-remote", help="Provider id")
+@click.option("--project", default=None, help="Project name")
+def otel_preview(path, provider_id, project):
+    """Dry-run: show what an OTLP file would produce without writing to the DB."""
+    from spooling.remote_otel import ingest_otlp_json_file
+    import json as _json
+
+    try:
+        # Parse the file to get the trace object without persisting
+        with open(path) as f:
+            raw = _json.load(f)
+        span_count = sum(
+            len(rs.get("scopeSpans", [{}])[0].get("spans", []))
+            for rs in raw.get("resourceSpans", [])
+        ) if isinstance(raw, dict) else 0
+
+        console.print(Panel(
+            f"File:         [bold]{path}[/bold]\n"
+            f"Provider:     {provider_id}\n"
+            f"Project:      {project or '(none)'}\n"
+            f"Resource span groups: {len(raw.get('resourceSpans', []))}\n"
+            f"Total spans:  [bold]{span_count}[/bold]\n"
+            f"\n[dim]Run without --dry-run equivalent: spooling otel ingest --file {path}[/dim]",
+            title="[bold]OTel Preview (dry run)[/bold]",
+            style="cyan",
+        ))
+    except Exception as e:
+        console.print(f"[red]Preview failed:[/red] {e}")
+        raise SystemExit(1)
+
+
 @cli.group()
 def experiment():
     """Create and run Strands experiments (cases + evaluators)."""
@@ -374,6 +407,89 @@ def experiment_run(experiment_id):
         console.print("Scores:")
         for name, score in run["overall_scores"].items():
             console.print(f"  - {name}: {score}")
+
+
+@experiment.command("inspect")
+@click.option("--id", "experiment_id", required=True, help="Experiment id")
+def experiment_inspect(experiment_id):
+    """Show the spec/definition of an experiment."""
+    from spooling.experiments import load_experiment
+    import json as _json
+
+    spec = load_experiment(experiment_id)
+    if not spec:
+        console.print(f"[red]Experiment not found: {experiment_id}[/red]")
+        return
+
+    console.print(Panel(
+        f"ID:          [bold]{spec.id}[/bold]\n"
+        f"Name:        {spec.name}\n"
+        f"Description: {spec.description or '—'}\n"
+        f"Cases:       {len(spec.cases)}\n"
+        f"Evaluators:  {len(spec.evaluators)}",
+        title="[bold]Experiment Spec[/bold]",
+        style="cyan",
+    ))
+
+    if spec.cases:
+        table = Table(title="Cases", show_lines=True)
+        table.add_column("#", justify="right")
+        table.add_column("Input")
+        table.add_column("Expected", style="dim")
+        for i, c in enumerate(spec.cases, 1):
+            inp = _json.dumps(c.get("input", ""))[:80] if isinstance(c.get("input"), dict) else str(c.get("input", ""))[:80]
+            exp = str(c.get("expected_output", ""))[:60]
+            table.add_row(str(i), inp, exp)
+        console.print(table)
+
+    if spec.evaluators:
+        table = Table(title="Evaluators", show_lines=False)
+        table.add_column("Name", style="cyan")
+        table.add_column("Kind")
+        for e in spec.evaluators:
+            table.add_row(e.get("name", ""), e.get("kind", ""))
+        console.print(table)
+
+
+@experiment.command("runs")
+@click.option("--id", "experiment_id", default=None, help="Filter to a specific experiment id")
+@click.option("--limit", "-n", default=20, help="Max runs to show (default: 20)")
+def experiment_runs(experiment_id, limit):
+    """List past experiment run history."""
+    from spooling.experiments import list_runs
+    import json as _json
+
+    rows = list_runs(experiment_id=experiment_id, limit=limit)
+    if not rows:
+        console.print("[yellow]No runs found.[/yellow]")
+        return
+
+    table = Table(title="Experiment Runs", show_lines=False)
+    table.add_column("Run ID", style="cyan")
+    table.add_column("Experiment")
+    table.add_column("Status")
+    table.add_column("Started", style="dim")
+    table.add_column("Finished", style="dim")
+    table.add_column("Scores")
+
+    for r in rows:
+        scores = r.get("overall_scores") or {}
+        if isinstance(scores, str):
+            try:
+                scores = _json.loads(scores)
+            except Exception:
+                scores = {}
+        score_str = "  ".join(f"{k}: {v:.2f}" if isinstance(v, float) else f"{k}: {v}" for k, v in scores.items())
+        status_color = "green" if r["status"] == "completed" else "red" if r["status"] == "failed" else "yellow"
+        table.add_row(
+            (r["id"] or "")[:16],
+            (r["experiment_id"] or "")[:20],
+            f"[{status_color}]{r['status']}[/{status_color}]",
+            str(r.get("started_at") or "")[:19],
+            str(r.get("finished_at") or "")[:19],
+            score_str or "—",
+        )
+    console.print(table)
 
 
 @experiment.command("show")
@@ -586,6 +702,74 @@ def cost_session(session_id):
                 f"${float(sp['cost_usd'] or 0):.4f}",
             )
         console.print(table)
+
+
+@cost.command("subscription")
+@click.option("--provider", "-p", required=True,
+              help=f"Provider id (e.g. cursor, copilot, windsurf, codex, gemini, kiro)")
+@click.option("--days", default=30, type=int, help="Look-back window in days (default: 30)")
+def cost_subscription(provider, days):
+    """Estimate flat-rate subscription spend for a provider.
+
+    Uses your actual model usage to infer which plan tier you were on,
+    then calculates the subscription cost over the date range — which is
+    typically far lower than the API-equivalent token cost shown by
+    'spooling cost overview'.
+
+    \b
+    Examples:
+      spooling cost subscription --provider cursor
+      spooling cost subscription --provider copilot --days 90
+    """
+    from spooling.subscription_pricing import subscription_cost_for_range
+    from spooling.db import get_connection
+    from datetime import datetime as _dt, timezone, timedelta
+
+    conn = get_connection()
+    cutoff = (_dt.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = conn.execute(
+        """SELECT model, MIN(started_at) AS first, MAX(ended_at) AS last
+           FROM sessions
+           WHERE provider_id = ? AND started_at >= ?
+           GROUP BY model""",
+        (provider, cutoff),
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        console.print(f"[yellow]No sessions found for provider '{provider}' in the last {days} days.[/yellow]")
+        return
+
+    models_used = [r["model"] for r in rows]
+    # date range across all sessions
+    all_starts = [r["first"] for r in rows if r["first"]]
+    all_ends   = [r["last"]  for r in rows if r["last"]]
+
+    def _parse(ts):
+        if not ts:
+            return None
+        if isinstance(ts, _dt):
+            return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+        try:
+            return _dt.fromisoformat(ts).replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+    started_at = min((_parse(t) for t in all_starts if _parse(t)), default=None)
+    ended_at   = max((_parse(t) for t in all_ends   if _parse(t)), default=None) or _dt.now(timezone.utc)
+
+    result = subscription_cost_for_range(provider, models_used, started_at, ended_at)
+
+    console.print(Panel(
+        f"Provider:      [bold]{provider}[/bold]\n"
+        f"Plan tier:     [bold]{result['plan']}[/bold]\n"
+        f"Monthly cost:  ${result['monthly_usd']:.2f}/mo\n"
+        f"Months billed: {result['months']}\n"
+        f"Est. total:    [bold]${result['cost_usd']:.2f}[/bold]\n"
+        f"\n[dim]Models detected: {', '.join(m for m in set(models_used) if m) or '—'}[/dim]",
+        title="[bold]Subscription Cost Estimate[/bold]",
+        style="green",
+    ))
 
 
 @cost.command("recalc")
@@ -851,6 +1035,243 @@ def ui():
 from spooling.cloud import cloud as _cloud_group, push as _push_cmd
 cli.add_command(_cloud_group)
 cli.add_command(_push_cmd)
+
+
+# ---------------------------------------------------------------------------
+# Redact
+# ---------------------------------------------------------------------------
+
+@cli.command()
+@click.option("--file", "path", default=None, type=click.Path(exists=True), help="File to scan for secrets")
+@click.option("--session", "session_id", default=None, help="Scan a specific session's messages from the local DB")
+@click.option("--show", is_flag=True, help="Print the redacted text (default: summary only)")
+def redact(path, session_id, show):
+    """Scan text or a session for secrets that would be redacted on push.
+
+    Useful for auditing what the pre-push redactor would catch before
+    running 'spooling push'.
+
+    \b
+    Examples:
+      spooling redact --file ./notes.txt
+      spooling redact --session <session_id>
+      spooling redact --file ./notes.txt --show
+    """
+    from spooling.redact import redact_text
+
+    if not path and not session_id:
+        console.print("[red]Provide --file or --session.[/red]")
+        raise SystemExit(1)
+
+    if path:
+        with open(path) as f:
+            text = f.read()
+        source = path
+    else:
+        from spooling.db import get_connection
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT role, content FROM messages WHERE session_id = ? ORDER BY timestamp",
+            (session_id,),
+        ).fetchall()
+        conn.close()
+        if not rows:
+            console.print(f"[yellow]No messages found for session {session_id}[/yellow]")
+            return
+        text = "\n".join(f"[{r['role']}] {r['content'] or ''}" for r in rows)
+        source = f"session {session_id[:12]}..."
+
+    redacted, hits = redact_text(text)
+
+    if not hits:
+        console.print(f"[green]No secrets detected in {source}.[/green]")
+    else:
+        console.print(f"[yellow]{len(hits)} secret(s) detected in {source}:[/yellow]")
+        table = Table(show_lines=False)
+        table.add_column("Label", style="red")
+        table.add_column("Position", style="dim")
+        for h in hits:
+            table.add_row(h.label, f"chars {h.span[0]}–{h.span[1]}")
+        console.print(table)
+
+    if show:
+        console.print("\n[bold]Redacted text:[/bold]")
+        console.print(redacted[:4000] + ("[dim]... truncated[/dim]" if len(redacted) > 4000 else ""))
+
+
+# ---------------------------------------------------------------------------
+# Sessions
+# ---------------------------------------------------------------------------
+
+@cli.group()
+def session():
+    """Inspect and list local sessions."""
+    pass
+
+
+@session.command("list")
+@click.option("--project", "-p", default=None, help="Filter by exact project name")
+@click.option("--cwd", default=None, help="Filter by cwd substring")
+@click.option("--title", default=None, help="Filter by title substring")
+@click.option("--limit", "-n", default=20, help="Max sessions to return (default: 20)")
+def session_list(project, cwd, title, limit):
+    """List local sessions with optional filters."""
+    from spooling.db import get_connection
+    from datetime import datetime as _dt
+
+    conn = get_connection()
+    wheres = []
+    params: list = []
+    if project:
+        wheres.append("LOWER(project) = LOWER(?)")
+        params.append(project)
+    if cwd:
+        wheres.append("cwd LIKE ?")
+        params.append(f"%{cwd}%")
+    if title:
+        wheres.append("title LIKE ?")
+        params.append(f"%{title}%")
+    where_clause = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+    params.append(limit)
+
+    rows = conn.execute(
+        f"""SELECT id, provider_id, project, title, started_at,
+                   message_count, tool_call_count, estimated_cost_usd
+            FROM sessions {where_clause}
+            ORDER BY started_at DESC NULLS LAST LIMIT ?""",
+        tuple(params),
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        console.print("[yellow]No sessions found.[/yellow]")
+        return
+
+    table = Table(title=f"Sessions ({len(rows)})", show_lines=False)
+    table.add_column("ID", style="dim")
+    table.add_column("Provider", style="cyan")
+    table.add_column("Project")
+    table.add_column("Title")
+    table.add_column("Started", style="dim")
+    table.add_column("Msgs", justify="right")
+    table.add_column("Tools", justify="right")
+    table.add_column("Cost", justify="right")
+
+    for r in rows:
+        raw_ts = r["started_at"]
+        if raw_ts and isinstance(raw_ts, str):
+            try:
+                raw_ts = _dt.fromisoformat(raw_ts)
+            except ValueError:
+                raw_ts = None
+        ts = raw_ts.strftime("%m/%d %H:%M") if raw_ts else ""
+        table.add_row(
+            (r["id"] or "")[:12],
+            r["provider_id"] or "",
+            _clean_project(r["project"] or ""),
+            (r["title"] or "")[:45],
+            ts,
+            str(r["message_count"] or 0),
+            str(r["tool_call_count"] or 0),
+            f"${float(r['estimated_cost_usd'] or 0):.4f}",
+        )
+    console.print(table)
+
+
+@session.command("show")
+@click.argument("session_id")
+@click.option("--messages", "-m", is_flag=True, help="Show full message content")
+def session_show(session_id, messages):
+    """Show full detail for a session including messages and tool calls."""
+    from spooling.stats import get_session_detail
+
+    detail = get_session_detail(session_id)
+    if not detail:
+        console.print(f"[yellow]Session not found: {session_id}[/yellow]")
+        return
+
+    s = detail["session"]
+    console.print(Panel(
+        f"ID:          [bold]{s['id']}[/bold]\n"
+        f"Provider:    {s.get('provider_id') or '—'}\n"
+        f"Project:     {_clean_project(s.get('project') or '—')}\n"
+        f"Model:       {s.get('model') or '—'}\n"
+        f"Started:     {str(s.get('started_at') or '')[:19]}\n"
+        f"Ended:       {str(s.get('ended_at') or '')[:19]}\n"
+        f"Messages:    {s.get('message_count', 0)}\n"
+        f"Tool calls:  {s.get('tool_call_count', 0)}\n"
+        f"In tokens:   {s.get('estimated_input_tokens', 0):,}\n"
+        f"Out tokens:  {s.get('estimated_output_tokens', 0):,}\n"
+        f"Cost:        [bold]${float(s.get('estimated_cost_usd') or 0):.4f}[/bold]",
+        title=f"[bold]{(s.get('title') or 'Session')[:60]}[/bold]",
+        style="blue",
+    ))
+
+    if detail["tool_summary"]:
+        table = Table(title="Tool Usage", show_lines=False)
+        table.add_column("Tool", style="magenta")
+        table.add_column("Uses", justify="right")
+        for t in detail["tool_summary"]:
+            table.add_row(t["tool_name"], str(t["uses"]))
+        console.print(table)
+
+    if messages and detail["messages"]:
+        table = Table(title="Messages", show_lines=True)
+        table.add_column("Role", style="cyan", width=10)
+        table.add_column("Timestamp", style="dim", width=18)
+        table.add_column("Content")
+        for m in detail["messages"]:
+            content = (m.get("content") or "")[:300]
+            if m.get("tool_calls"):
+                tools = ", ".join(tc["name"] for tc in m["tool_calls"])
+                content += f"\n[dim]Tools: {tools}[/dim]"
+            table.add_row(
+                m.get("role", ""),
+                str(m.get("timestamp") or "")[:18],
+                content,
+            )
+        console.print(table)
+    elif not messages and detail["messages"]:
+        console.print(f"[dim]{len(detail['messages'])} messages — pass --messages to show content[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Stats providers subcommand
+# ---------------------------------------------------------------------------
+
+@cli.command("providers")
+def stats_providers():
+    """Show usage breakdown by provider."""
+    from spooling.stats import get_provider_breakdown
+
+    rows = get_provider_breakdown()
+    if not rows:
+        console.print("[yellow]No sessions synced yet. Run 'spooling sync' first.[/yellow]")
+        return
+
+    table = Table(title="Provider Breakdown", show_lines=False)
+    table.add_column("Provider", style="cyan")
+    table.add_column("Sessions", justify="right")
+    table.add_column("Messages", justify="right")
+    table.add_column("Tool Calls", justify="right")
+    table.add_column("In Tokens", justify="right")
+    table.add_column("Out Tokens", justify="right")
+    table.add_column("Est. Cost", justify="right")
+    table.add_column("Last Session", style="dim")
+
+    for r in rows:
+        last = str(r.get("last_session") or "")[:10]
+        table.add_row(
+            r["provider_id"] or "unknown",
+            str(r["sessions"]),
+            str(int(r["messages"] or 0)),
+            str(int(r["tool_calls"] or 0)),
+            f"{int(r['input_tokens'] or 0):,}",
+            f"{int(r['output_tokens'] or 0):,}",
+            f"${float(r['cost'] or 0):.2f}",
+            last,
+        )
+    console.print(table)
 
 
 # ---------------------------------------------------------------------------

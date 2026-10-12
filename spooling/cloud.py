@@ -223,16 +223,17 @@ def _collect_traces(session_ids: list[str]) -> list[dict]:
         return []
     conn = get_connection()
     try:
+        placeholders = ", ".join(["%s"] * len(session_ids))
         traces = conn.execute(
-            """SELECT id, session_id, provider_id, project, title,
+            f"""SELECT id, session_id, provider_id, project, title,
                       started_at, ended_at, duration_ms,
                       span_count, agent_count, tool_count, llm_count, error_count,
                       total_input_tokens, total_output_tokens,
                       total_cache_read_tokens, total_cache_write_tokens,
                       total_cost_usd, cwd, git_branch, model,
                       vendor_count, top_vendors, attrs
-               FROM traces WHERE session_id = ANY(%s)""",
-            (session_ids,),
+               FROM traces WHERE session_id IN ({placeholders})""",
+            tuple(session_ids),
         ).fetchall()
 
         out: list[dict] = []

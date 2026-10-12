@@ -1,8 +1,13 @@
 """Cloudflare tunnel support for exposing local MCP servers."""
 
+import os
+import platform
 import re
+import stat
 import subprocess
 import time
+import urllib.request
+from pathlib import Path
 from typing import Optional, Tuple
 
 from rich.console import Console
@@ -12,19 +17,85 @@ console = Console()
 # Pattern to match Cloudflare quick tunnel URLs
 TUNNEL_URL_PATTERN = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 
+# Where we cache the auto-downloaded binary
+_BIN_DIR = Path.home() / ".spooling" / "bin"
+_CLOUDFLARED_BIN = _BIN_DIR / ("cloudflared.exe" if platform.system() == "Windows" else "cloudflared")
+
+# Download URL templates per platform/arch
+_DOWNLOAD_URLS: dict[tuple[str, str], str] = {
+    ("Darwin",  "arm64"):  "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64",
+    ("Darwin",  "x86_64"): "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64",
+    ("Linux",   "aarch64"):"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64",
+    ("Linux",   "x86_64"): "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
+    ("Windows", "AMD64"):  "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe",
+}
+
+
+def _cloudflared_cmd() -> Optional[str]:
+    """Return the path to a usable cloudflared binary, or None."""
+    # 1. Already on PATH
+    try:
+        result = subprocess.run(["cloudflared", "version"], capture_output=True, timeout=5)
+        if result.returncode == 0:
+            return "cloudflared"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # 2. Previously auto-downloaded
+    if _CLOUDFLARED_BIN.exists():
+        try:
+            result = subprocess.run([str(_CLOUDFLARED_BIN), "version"], capture_output=True, timeout=5)
+            if result.returncode == 0:
+                return str(_CLOUDFLARED_BIN)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+    return None
+
+
+def _auto_install_cloudflared() -> Optional[str]:
+    """Download the cloudflared binary for this platform into ~/.spooling/bin/.
+
+    Returns the path to the binary on success, None on failure.
+    """
+    system = platform.system()
+    machine = platform.machine()
+    url = _DOWNLOAD_URLS.get((system, machine))
+
+    if not url:
+        console.print(f"[red]No cloudflared binary available for {system}/{machine}.[/red]")
+        console.print("Install manually: https://developers.cloudflare.com/cloudflared/install/")
+        return None
+
+    _BIN_DIR.mkdir(parents=True, exist_ok=True)
+
+    console.print(f"[bold]Downloading cloudflared for {system}/{machine}...[/bold]")
+    try:
+        urllib.request.urlretrieve(url, _CLOUDFLARED_BIN)
+    except Exception as e:
+        console.print(f"[red]Download failed:[/red] {e}")
+        return None
+
+    # Make executable on Unix
+    if system != "Windows":
+        _CLOUDFLARED_BIN.chmod(_CLOUDFLARED_BIN.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    # Verify
+    try:
+        result = subprocess.run([str(_CLOUDFLARED_BIN), "version"], capture_output=True, timeout=5)
+        if result.returncode == 0:
+            console.print(f"[green]cloudflared installed to {_CLOUDFLARED_BIN}[/green]")
+            return str(_CLOUDFLARED_BIN)
+    except Exception:
+        pass
+
+    console.print("[red]Downloaded binary did not run correctly.[/red]")
+    return None
+
 
 def check_cloudflared() -> bool:
-    """Check if cloudflared is installed."""
-    try:
-        result = subprocess.run(
-            ["cloudflared", "version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    """Check if cloudflared is available (on PATH or auto-downloaded)."""
+    return _cloudflared_cmd() is not None
 
 
 def _validate_port(port: int) -> bool:
@@ -49,15 +120,13 @@ def start_tunnel(
         console.print(f"[red]Invalid port: {port}. Must be 1-65535.[/red]")
         return None
 
-    if not check_cloudflared():
-        console.print("[red]cloudflared is not installed.[/red]")
-        console.print("Install it:")
-        console.print("  macOS:   [bold]brew install cloudflared[/bold]")
-        console.print("  Linux:   [bold]curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared[/bold]")
-        console.print("  Windows: [bold]winget install cloudflare.cloudflared[/bold]")
+    cmd_bin = _cloudflared_cmd()
+    if not cmd_bin:
+        cmd_bin = _auto_install_cloudflared()
+    if not cmd_bin:
         return None
 
-    cmd = ["cloudflared", "tunnel", "--no-autoupdate", "--url", f"http://localhost:{port}"]
+    cmd = [cmd_bin, "tunnel", "--no-autoupdate", "--url", f"http://localhost:{port}"]
 
     console.print(f"[bold]Starting Cloudflare tunnel to localhost:{port}...[/bold]")
 
@@ -142,10 +211,13 @@ def start_tunnel_background(
     if not _validate_port(port):
         return None, None
 
-    if not check_cloudflared():
+    cmd_bin = _cloudflared_cmd()
+    if not cmd_bin:
+        cmd_bin = _auto_install_cloudflared()
+    if not cmd_bin:
         return None, None
 
-    cmd = ["cloudflared", "tunnel", "--no-autoupdate", "--url", f"http://localhost:{port}"]
+    cmd = [cmd_bin, "tunnel", "--no-autoupdate", "--url", f"http://localhost:{port}"]
 
     process = subprocess.Popen(
         cmd,
