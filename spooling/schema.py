@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 CREATE INDEX IF NOT EXISTS idx_chunks_session ON chunks(session_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_project ON chunks(project);
+CREATE INDEX IF NOT EXISTS idx_chunks_message ON chunks(message_id);
 
 CREATE TABLE IF NOT EXISTS sync_state (
     file_path TEXT PRIMARY KEY,

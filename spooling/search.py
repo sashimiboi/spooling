@@ -18,54 +18,104 @@ OVERFETCH = 4
 
 
 def _deserialize(blob: bytes) -> np.ndarray:
-    n = len(blob) // 4
     return np.frombuffer(blob, dtype=np.float32)
+
+
+class _Index:
+    """In-memory embedding matrix, rebuilt only when the chunks table changes.
+
+    Only ids/projects and the float32 matrix are cached; chunk text is fetched
+    for the handful of top hits, so building the index never touches the large
+    ``content`` column.
+    """
+
+    __slots__ = ("stamp", "ids", "projects", "matrix")
+
+    def __init__(self, stamp, ids, projects, matrix):
+        self.stamp = stamp
+        self.ids = ids
+        self.projects = projects
+        self.matrix = matrix
+
+
+_INDEX: _Index | None = None
+
+def _stamp(conn, dim: int) -> tuple[int, int, int]:
+    row = conn.execute("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS m FROM chunks").fetchone()
+    return (row["n"], row["m"], dim)
+
+
+def _load_index(conn, dim: int) -> _Index:
+    global _INDEX
+    stamp = _stamp(conn, dim)
+    if _INDEX is not None and _INDEX.stamp == stamp:
+        return _INDEX
+
+    ids: list[int] = []
+    projects: list[str | None] = []
+    blobs: list[bytes] = []
+    for r in conn.execute(
+        "SELECT id, project, embedding FROM chunks WHERE embedding IS NOT NULL"
+    ).fetchall():
+        emb = r["embedding"]
+        if len(emb) != dim * 4:  # skip rows from a different embedding model
+            continue
+        ids.append(r["id"])
+        projects.append(r["project"])
+        blobs.append(emb)
+
+    if blobs:
+        matrix = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(blobs), dim)
+    else:
+        matrix = np.zeros((0, dim), dtype=np.float32)
+    _INDEX = _Index(stamp, np.array(ids, dtype=np.int64), np.array(projects, dtype=object), matrix)
+    return _INDEX
 
 
 def search(query: str, limit: int = 10, project: str | None = None) -> list[dict]:
     """Search session chunks by semantic similarity."""
-    vec = embed_text(query)
-    query_arr = np.array(vec, dtype=np.float32)
+    query_arr = np.array(embed_text(query), dtype=np.float32)
 
     conn = get_connection()
-    if project:
-        rows = conn.execute(
-            """SELECT c.id, c.content, c.role, c.project, c.timestamp,
-                      c.session_id, c.embedding, s.title, s.cwd
-               FROM chunks c
-               JOIN sessions s ON s.id = c.session_id
-               WHERE c.project = ? AND c.embedding IS NOT NULL""",
-            (project,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            """SELECT c.id, c.content, c.role, c.project, c.timestamp,
-                      c.session_id, c.embedding, s.title, s.cwd
-               FROM chunks c
-               JOIN sessions s ON s.id = c.session_id
-               WHERE c.embedding IS NOT NULL"""
-        ).fetchall()
-    conn.close()
+    try:
+        index = _load_index(conn, query_arr.shape[0])
+        if index.matrix.shape[0] == 0:
+            return []
 
-    if not rows:
-        return []
+        # all-MiniLM-L6-v2 produces unit vectors, so dot-product == cosine.
+        sims = index.matrix @ query_arr
+        if project:
+            sims = np.where(index.projects == project, sims, -1.0)
 
-    # Build embedding matrix — all-MiniLM-L6-v2 produces unit vectors so
-    # dot-product == cosine similarity directly.
-    embeddings = np.array([_deserialize(r["embedding"]) for r in rows], dtype=np.float32)
-    similarities = embeddings @ query_arr  # (n_chunks,)
+        fetch_n = min(max(limit * OVERFETCH, 40), sims.shape[0])
+        top = np.argpartition(-sims, fetch_n - 1)[:fetch_n]
+        top = top[np.argsort(-sims[top])]
+        top = [i for i in top if sims[i] >= MIN_SIMILARITY]
+        if not top:
+            return []
 
-    # Sort descending; keep one chunk per session (best score), drop noise.
-    order = np.argsort(similarities)[::-1]
-    fetch_n = max(limit * OVERFETCH, 40)
+        top_ids = [int(index.ids[i]) for i in top]
+        marks = ",".join("?" * len(top_ids))
+        rows = {
+            r["id"]: r
+            for r in conn.execute(
+                f"""SELECT c.id, c.content, c.role, c.project, c.timestamp,
+                           c.session_id, s.title, s.cwd
+                    FROM chunks c JOIN sessions s ON s.id = c.session_id
+                    WHERE c.id IN ({marks})""",
+                top_ids,
+            ).fetchall()
+        }
+    finally:
+        conn.close()
 
+    # One chunk per session (best score first).
     seen: set[str] = set()
     results: list[dict] = []
-    for idx in order[:fetch_n]:
-        sim = float(similarities[idx])
-        if sim < MIN_SIMILARITY:
-            break
-        r = rows[idx]
+    for i, cid in zip(top, top_ids):
+        r = rows.get(cid)
+        if r is None:
+            continue
         sid = r["session_id"]
         if sid in seen:
             continue
@@ -76,7 +126,7 @@ def search(query: str, limit: int = 10, project: str | None = None) -> list[dict
             "project": r["project"],
             "timestamp": r["timestamp"],
             "session_id": sid,
-            "similarity": round(sim, 4),
+            "similarity": round(float(sims[i]), 4),
             "title": r["title"],
             "cwd": r["cwd"],
         })

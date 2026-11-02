@@ -54,6 +54,13 @@ class Provider(ABC):
     # the right form.
     requires_credentials: bool = False
 
+    # True for providers whose single "file" contains many sessions and that
+    # track per-session versions themselves (see ``ParsedSession.source_key``).
+    # Ingest then always scans the file (the file-size watermark is useless
+    # for a constantly-changing DB) and passes ``synced`` to
+    # ``parse_session_file`` so unchanged sessions are skipped cheaply.
+    incremental: bool = False
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         # Don't register the abstract RemoteProvider base.
