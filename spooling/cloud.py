@@ -454,6 +454,33 @@ def _push_batches(
     return total, rejected, None
 
 
+def _sync_local(log=console.print) -> None:
+    """Ingest new/updated provider sessions into the local DB before pushing.
+
+    `push` only reads the local DB, so without this step sessions created since
+    the last `spooling sync` (or `spooling watch`) would be silently skipped.
+    Embeddings are skipped (push doesn't use them and they dominate runtime);
+    run `spooling sync` or `spooling watch` for local semantic search.
+    A failure here is non-fatal: we warn and push whatever is already local.
+    """
+    from spooling.ingest import sync as do_sync
+
+    log("[dim]Syncing local sessions before push…[/dim]")
+    try:
+        do_sync(embed=False)
+    except Exception as e:  # noqa: BLE001
+        log(f"[yellow]Local sync failed ({e}); pushing what's already in the local DB.[/yellow]")
+
+
+_SYNC_OPTION = click.option(
+    "--sync/--no-sync",
+    "do_sync",
+    default=True,
+    show_default=True,
+    help="Ingest new provider sessions into the local DB before pushing. Use --no-sync to push only what is already local.",
+)
+
+
 @click.command()
 @click.option("--limit", default=100, help="Max sessions to push per run")
 @click.option("--batch", default=20, help="Sessions per request")
@@ -496,7 +523,8 @@ def _push_batches(
     is_flag=True,
     help="Skip the client-side secret redactor. By default spool scrubs secrets (Snowflake/AWS/GitHub/OpenAI/Anthropic/Stripe tokens, PEM private keys, KEY=VALUE lines whose key looks sensitive) before pushing. Use this only if you're sure the content is clean and you need raw values.",
 )
-def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, title_substr: str | None, dry_run: bool, copy: bool, with_spans: bool, no_redact: bool):
+@_SYNC_OPTION
+def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, title_substr: str | None, dry_run: bool, copy: bool, with_spans: bool, no_redact: bool, do_sync: bool):
     """Push local sessions up to Spooling Cloud.
 
     Without filters, this pushes the most recent ``--limit`` sessions from
@@ -531,6 +559,8 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, ti
         return
     headers = _auth_headers()
     base = _api_base()
+    if do_sync:
+        _sync_local()
     sessions = _collect_sessions(
         limit=limit,
         since=None,
@@ -638,7 +668,8 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, ti
     is_flag=True,
     help="Skip the client-side secret redactor (see `spooling push --help`).",
 )
-def cloud_watch(interval: int, limit: int, batch: int, lookback: int, no_redact: bool):
+@_SYNC_OPTION
+def cloud_watch(interval: int, limit: int, batch: int, lookback: int, no_redact: bool, do_sync: bool):
     """Continuously push new local sessions to Spooling Cloud (Ctrl+C to stop)."""
     headers = _auth_headers()
     base = _api_base()
@@ -662,6 +693,9 @@ def cloud_watch(interval: int, limit: int, batch: int, lookback: int, no_redact:
         # Re-read each cycle so a manual `spooling cloud login` change is picked up.
         headers = _auth_headers()
         since = (watermark - timedelta(minutes=lookback)) if watermark else None
+
+        if do_sync:
+            _sync_local(log=lambda *_a, **_k: None)
 
         try:
             sessions = _collect_sessions(limit=limit, since=since)

@@ -202,6 +202,7 @@ class OpencodeProvider(Provider):
 
     type_id = "opencode"
     name = "opencode"
+    incremental = True
 
     def default_data_path(self) -> Path:
         return OPENCODE_DB
@@ -213,7 +214,34 @@ class OpencodeProvider(Provider):
         db = data_path or self.resolved_data_path()
         return [db] if db.exists() else []
 
-    def parse_session_file(self, file_path: Path) -> list[ParsedSession]:
+    @staticmethod
+    def _session_versions(conn: sqlite3.Connection) -> dict[str, int]:
+        """Latest activity timestamp (ms) per session across session, message
+        and part rows. A session needs re-ingesting iff this changed."""
+        versions: dict[str, int] = {}
+        for sql in (
+            "SELECT id, time_updated FROM session",
+            "SELECT session_id, MAX(time_updated) FROM message GROUP BY session_id",
+            "SELECT session_id, MAX(time_updated) FROM part GROUP BY session_id",
+        ):
+            for sid, ts in conn.execute(sql):
+                if ts is not None and ts > versions.get(sid, 0):
+                    versions[sid] = int(ts)
+        return versions
+
+    @staticmethod
+    def source_key_for(file_path: Path, session_id: str) -> str:
+        return f"{file_path}#{session_id}"
+
+    def parse_session_file(
+        self, file_path: Path, synced: dict[str, int] | None = None
+    ) -> list[ParsedSession]:
+        """Parse opencode.db into sessions.
+
+        When ``synced`` (sync_state map of key -> version) is given, sessions
+        whose version hasn't changed since the last sync are skipped without
+        reading their messages/parts.
+        """
         try:
             conn = sqlite3.connect(f"file:{file_path}?mode=ro", uri=True)
         except sqlite3.Error:
@@ -226,9 +254,14 @@ class OpencodeProvider(Provider):
                 "SELECT id, directory, title, version, model, agent, "
                 "time_created, time_updated FROM session ORDER BY time_created"
             ).fetchall()
+            versions = self._session_versions(conn)
 
             for s in session_rows:
                 sid = s["id"]
+                key = self.source_key_for(file_path, sid)
+                version = versions.get(sid) or s["time_updated"]
+                if synced is not None and synced.get(key) == version:
+                    continue
                 message_rows = conn.execute(
                     "SELECT id, time_created, data FROM message "
                     "WHERE session_id = ? ORDER BY time_created, id",
@@ -292,6 +325,8 @@ class OpencodeProvider(Provider):
                     agent_version=s["version"] or None,
                     model=model,
                     provider_id="opencode",
+                    source_key=key,
+                    source_version=int(version) if version is not None else None,
                 )
                 session.trace = build_flat_trace_from_messages(
                     provider_id="opencode",

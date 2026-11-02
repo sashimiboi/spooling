@@ -72,6 +72,34 @@ def sync(no_embed, provider):
 
 
 @cli.command()
+@click.option("--no-backup", is_flag=True, help="Skip the pre-optimize database backup")
+@click.option("--no-vacuum", is_flag=True, help="Skip VACUUM (faster, but doesn't reclaim disk space)")
+@click.option("--no-embed", is_flag=True, help="Skip embedding messages that are missing chunks")
+def optimize(no_backup, no_vacuum, no_embed):
+    """Deduplicate and compact the local database.
+
+    Removes duplicated tool-call rows left by older versions, truncates
+    oversized previews, embeds any messages missing chunks, and VACUUMs.
+    A backup is written next to the database first.
+    """
+    from spooling.optimize import optimize as run_optimize
+
+    try:
+        s = run_optimize(
+            backup=not no_backup, vacuum=not no_vacuum, embed=not no_embed,
+            log=lambda m: console.print(m),
+        )
+    except RuntimeError as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+    mb = lambda b: f"{b / 2**20:,.0f} MB"
+    console.print(
+        f"[green]Done.[/green] {mb(s['before_bytes'])} -> {mb(s['after_bytes'])} "
+        f"({mb(s['before_bytes'] - s['after_bytes'])} reclaimed)"
+    )
+
+
+@cli.command()
 def watch():
     """Watch for new session data and auto-sync."""
     from spooling.watcher import watch as do_watch

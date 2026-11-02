@@ -1,6 +1,7 @@
 """Ingestion pipeline - parse AI coding sessions from multiple providers and store in SQLite."""
 
 import json
+import re
 import struct
 from pathlib import Path
 
@@ -59,6 +60,24 @@ def _mark_synced(conn, file_path: str, size: int, provider_id: str = "jsonl-sess
     )
 
 
+# Cap stored tool-result previews; the full output lives in the source tool's
+# own data and isn't searched or displayed beyond a preview.
+MAX_RESULT_PREVIEW = 2000
+
+
+def _mark_session_synced(conn, session: ParsedSession) -> None:
+    """Record per-session version for incremental providers."""
+    if session.source_key and session.source_version is not None:
+        _mark_synced(conn, session.source_key, session.source_version, session.provider_id)
+
+
+def parse_file(provider, file_path, synced: dict[str, int] | None = None) -> list[ParsedSession]:
+    """Parse a provider file, passing per-session sync state when supported."""
+    if getattr(provider, "incremental", False):
+        return provider.parse_session_file(file_path, synced=synced)
+    return provider.parse_session_file(file_path)
+
+
 def _store_session(conn, session: ParsedSession):
     """Store a parsed session and its messages."""
     cost = _estimate_cost(
@@ -109,7 +128,7 @@ def _store_session(conn, session: ParsedSession):
                 tool_rows_full.append((
                     session.session_id, msg.uuid, _scrub(td.name),
                     _scrub(td.input_summary),
-                    _scrub(td.result_preview) or None,
+                    (_scrub(td.result_preview) or "")[:MAX_RESULT_PREVIEW] or None,
                     msg.timestamp,
                 ))
         else:
@@ -117,6 +136,10 @@ def _store_session(conn, session: ParsedSession):
                 tool_rows_simple.append((
                     session.session_id, msg.uuid, _scrub(tool_name), msg.timestamp,
                 ))
+
+    # Re-ingesting a session (file grew, incremental provider changed, ...)
+    # must replace its tool calls, not append another copy.
+    conn.execute("DELETE FROM tool_calls WHERE session_id = %s", (session.session_id,))
 
     if msg_rows:
         conn.executemany(
@@ -287,14 +310,28 @@ def _serialize_embedding(vec: list[float]) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec)
 
 
+_TOOL_MARKER_RE = re.compile(r"\[tool: [^\]]*\]")
+
+
+def _chunks_for_content(content: str | None) -> list[str]:
+    """Chunk message text for embedding.
+
+    Messages that are nothing but ``[tool: X]`` markers carry no searchable
+    meaning, so they produce no chunks.
+    """
+    if not content or not content.strip():
+        return []
+    if not _TOOL_MARKER_RE.sub("", content).strip():
+        return []
+    return chunk_text(content)
+
+
 def _collect_session_chunks(session: ParsedSession) -> tuple[list[str], list[dict]]:
     """Collect all text chunks and their metadata for a session (no embedding)."""
     all_chunks: list[str] = []
     chunk_meta: list[dict] = []
     for msg in session.messages:
-        if not msg.content.strip():
-            continue
-        for chunk in chunk_text(msg.content):
+        for chunk in _chunks_for_content(msg.content):
             all_chunks.append(chunk)
             chunk_meta.append({
                 "session_id": session.session_id,
@@ -334,6 +371,45 @@ def _embed_session(conn, session: ParsedSession):
     vectors = embed_texts(all_chunks)
     _write_chunk_rows(conn, all_chunks, vectors, chunk_meta)
     return len(all_chunks)
+
+
+def backfill_embeddings(conn, batch_size: int = 1000, log=None) -> int:
+    """Embed stored messages that have no chunks yet.
+
+    Lets ``sync --no-embed`` (and ``push``'s pre-sync) stay fast without
+    leaving permanent holes in local semantic search: the next embedding sync
+    picks up every message that is still missing chunks. Returns the number of
+    chunks written.
+    """
+    rows = conn.execute(
+        """SELECT m.id, m.session_id, m.role, m.content, m.timestamp, s.project
+           FROM messages m
+           JOIN sessions s ON s.id = m.session_id
+           WHERE m.content IS NOT NULL AND m.content != ''
+             AND NOT EXISTS (SELECT 1 FROM chunks c WHERE c.message_id = m.id)"""
+    ).fetchall()
+
+    chunks: list[str] = []
+    metas: list[dict] = []
+    for r in rows:
+        for chunk in _chunks_for_content(r["content"]):
+            chunks.append(chunk)
+            metas.append({
+                "session_id": r["session_id"], "message_id": r["id"],
+                "role": r["role"], "project": r["project"], "timestamp": r["timestamp"],
+            })
+    if not chunks:
+        return 0
+
+    if log:
+        log(f"[dim]Embedding {len(chunks)} chunks for messages missing them…[/dim]")
+    written = 0
+    for i in range(0, len(chunks), batch_size):
+        c, m = chunks[i:i + batch_size], metas[i:i + batch_size]
+        _write_chunk_rows(conn, c, embed_texts(c), m)
+        conn.commit()
+        written += len(c)
+    return written
 
 
 def _get_connected_providers(conn) -> list[dict]:
@@ -457,11 +533,12 @@ def sync(embed: bool = True, provider_filter: str | None = None):
         if not files:
             continue
 
-        # Filter to new or changed files
+        # Filter to new or changed files. Incremental providers (many sessions
+        # per file) are always scanned; they skip unchanged sessions themselves.
         to_process = []
         for f in files:
             size = f.stat().st_size
-            if str(f) not in synced or synced[str(f)] != size:
+            if provider.incremental or str(f) not in synced or synced[str(f)] != size:
                 to_process.append(f)
 
         if not to_process:
@@ -493,11 +570,12 @@ def sync(embed: bool = True, provider_filter: str | None = None):
                 batch_sessions: list[tuple] = []  # (file, [sessions])
 
                 for f in batch_files:
-                    sessions = provider.parse_session_file(f)
+                    sessions = parse_file(provider, f, synced)
                     for session in sessions:
                         _store_session(conn, session)
                         if session.trace is not None:
                             _store_trace(conn, session.trace)
+                        _mark_session_synced(conn, session)
                         total_messages += session.message_count
                         total_sessions += 1
                     batch_sessions.append((f, sessions))
@@ -543,10 +621,26 @@ def sync(embed: bool = True, provider_filter: str | None = None):
             f"{total_chunks} chunks embedded.[/green]"
         )
 
+    if embed:
+        grand_total_chunks += backfill_embeddings(conn, log=console.print)
+
+    try:
+        stored = conn.execute("SELECT COUNT(*) AS n FROM tool_calls").fetchone()["n"]
+        expected = conn.execute("SELECT COALESCE(SUM(tool_call_count), 0) AS n FROM sessions").fetchone()["n"]
+        if stored > 2 * expected + 1000:
+            console.print(
+                f"[yellow]Your database holds {stored:,} tool-call rows but only ~{expected:,} are real "
+                f"(duplicates from older versions). Run [bold]spooling optimize[/bold] to reclaim the space.[/yellow]"
+            )
+    except Exception:
+        pass
+
     conn.close()
 
     if grand_total_sessions == 0:
         console.print("[green]All sessions already synced.[/green]")
+        if grand_total_chunks:
+            console.print(f"[green]Backfilled {grand_total_chunks} missing chunks.[/green]")
     else:
         console.print(
             f"\n[green]Total: {grand_total_sessions} sessions, "

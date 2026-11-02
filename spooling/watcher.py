@@ -7,7 +7,10 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent
 
 from spooling.db import get_connection
-from spooling.ingest import _store_session, _embed_session, _mark_synced
+from spooling.ingest import (
+    _embed_session, _get_synced_files, _mark_session_synced, _mark_synced,
+    _store_session, parse_file,
+)
 from spooling.providers import get_provider, get_all_providers
 from spooling.providers.base import Provider
 
@@ -37,7 +40,12 @@ class MultiProviderHandler(FileSystemEventHandler):
         file_path = Path(path)
 
         # Let the provider try to parse it
-        sessions = self.provider.parse_session_file(file_path)
+        conn = get_connection()
+        try:
+            synced = _get_synced_files(conn) if self.provider.incremental else None
+        finally:
+            conn.close()
+        sessions = parse_file(self.provider, file_path, synced)
         if not sessions:
             return
 
@@ -51,6 +59,7 @@ class MultiProviderHandler(FileSystemEventHandler):
             total_chunks = 0
             for session in sessions:
                 _store_session(conn, session)
+                _mark_session_synced(conn, session)
                 total_msgs += session.message_count
                 if self.embed:
                     total_chunks += _embed_session(conn, session)

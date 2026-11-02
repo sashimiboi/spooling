@@ -67,6 +67,13 @@ class ParsedSession:
     title: str | None = None
     provider_id: str = "jsonl-session"
     trace: Optional[Trace] = None
+    # Per-session incremental sync marker. Providers whose "file" holds many
+    # sessions (e.g. opencode's single SQLite DB) set these so ingest can skip
+    # sessions whose upstream version hasn't changed since the last sync.
+    # ``source_key`` is stored in sync_state.file_path, ``source_version`` in
+    # sync_state.last_size.
+    source_key: str | None = None
+    source_version: int | None = None
 
     @property
     def message_count(self) -> int:
