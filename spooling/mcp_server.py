@@ -10,6 +10,7 @@ Tools exposed:
   - list_traces(limit, provider, project)
   - get_trace(trace_id)
   - search_sessions(query, limit, project)
+  - get_session(session_id, include_messages)
   - get_stats()
   - get_top_vendors()
   - list_evals(rubric_id, limit)
@@ -306,6 +307,10 @@ def search_sessions(
 ) -> list[dict]:
     """Semantic search over Spooling's embedded session chunks. Returns ranked matches.
 
+    Each result includes ``session_id`` and ``title``. A session id (or prefix,
+    e.g. ``ses_e6310bd1``) in the query matches that session directly and ranks
+    first. Use ``get_session`` to read a result's full conversation.
+
     Falls back to Spooling Cloud ILIKE search when the local DB has no
     embedded results and a cloud API key is configured. Cloud results
     include a ``_source: "cloud"`` field.
@@ -372,6 +377,53 @@ def search_sessions(
         }
         for s in sessions
     ]
+
+
+@mcp.tool()
+def get_session(
+    session_id: str,
+    include_messages: bool = True,
+    max_messages: int = 200,
+    max_chars: int = 4000,
+) -> dict:
+    """Fetch one session by id, including its conversation text.
+
+    Use after ``search_sessions`` (or ``list_traces``) to read what was said.
+    Accepts a full session id or a unique prefix (e.g. ``ses_e6310bd1``).
+
+    Args:
+        session_id: Full session id or unique prefix.
+        include_messages: Include the message text (default True).
+        max_messages: Max messages to return, oldest first (default 200).
+        max_chars: Truncate each message to this many characters (0 = no limit).
+    """
+    from spooling.sessions import resolve_session_ids
+    from spooling.stats import get_session_detail
+
+    matches = resolve_session_ids(session_id)
+    if not matches:
+        return {"error": f"session not found: {session_id}"}
+    if len(matches) > 1:
+        return {"error": f"ambiguous session id: {session_id}", "matches": matches}
+
+    detail = get_session_detail(matches[0])
+    if not detail:
+        return {"error": f"session not found: {session_id}"}
+
+    out: dict = {
+        "session": detail["session"],
+        "tool_summary": detail["tool_summary"],
+        "message_count": len(detail["messages"]),
+    }
+    if include_messages:
+        msgs = detail["messages"][: max(0, max_messages)]
+        for m in msgs:
+            content = m.get("content") or ""
+            if max_chars and len(content) > max_chars:
+                m["content"] = content[:max_chars] + "..."
+        out["messages"] = msgs
+        out["truncated"] = len(detail["messages"]) > len(msgs)
+    return out
 
 
 @mcp.tool()

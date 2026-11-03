@@ -20,7 +20,7 @@ No Docker, no PostgreSQL, no Node.js required.
 
 ## How it works
 
-**Four commands. Zero cloud.**
+**Three steps. Local by default.**
 
 ### 01 &nbsp; Install
 
@@ -46,6 +46,8 @@ spooling sync      # embed every session for semantic search
 
 ```bash
 spooling search "that redis race condition"
+spooling session list                      # find a session and its id
+spooling session show ses_e6310bd1 -m      # read that session's full text
 spooling stats
 spooling mcp       # MCP server at http://127.0.0.1:3004/mcp
 ```
@@ -54,7 +56,7 @@ spooling mcp       # MCP server at http://127.0.0.1:3004/mcp
 
 ## Connect Spooling to your AI coding agent
 
-`spooling mcp` exposes an MCP server at `http://127.0.0.1:3004/mcp` (HTTP streamable transport). Any MCP-speaking agent can connect to it and pull context from your local KB mid-conversation. The agent gets tools like `spooling_search`, `spooling_recent_sessions`, `spooling_get_session`, `spooling_workspace_stats`, and `spooling_top_projects`.
+`spooling mcp` exposes an MCP server at `http://127.0.0.1:3004/mcp` (HTTP streamable transport). Any MCP-speaking agent can connect to it and pull context from your local KB mid-conversation. The agent gets tools like `search_sessions` (find a session), `get_session` (read its full conversation by id), `get_stats`, and `list_traces`. See [Tools exposed](#tools-exposed) for the full list.
 
 ### Cursor / Windsurf / Codex / Antigravity
 
@@ -81,7 +83,7 @@ curl -s http://127.0.0.1:3004/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq
 ```
 
-Should return the five `spool_*` tools. If you get "connection refused", `spooling ui` is not running (or its ports got squatted, run `lsof -ti :3004 | xargs kill -9` and retry).
+Should return the tools listed under [Tools exposed](#tools-exposed). If you get "connection refused", `spooling mcp` (or `spooling ui`) is not running, or something else is using port 3004. Find it with `lsof -i :3004`.
 
 ---
 
@@ -89,7 +91,7 @@ Should return the five `spool_*` tools. If you get "connection refused", `spooli
 
 ### `spooling init`
 
-Check database connection and show which AI coding tool providers are detected on your system. This scans default paths for Codex CLI, GitHub Copilot, Cursor, and Windsurf session data.
+Check that the local database opens and show which AI coding tool providers are detected on your system. This scans the default paths for every supported provider (see [Supported Providers](#supported-providers)).
 
 ```bash
 spooling init
@@ -118,17 +120,48 @@ spooling stats --days 30   # Last 30 days
 
 ### `spooling search <query>`
 
-Semantic search across all your session history using natural language.
+Semantic search across all your session history using natural language. Each result shows the session title **and its session id**, so you can open it with `spooling session show`.
 
 ```bash
 spooling search "snowflake connector"
 spooling search "authentication bug" -n 5
-spooling search "database migration" -p ~/myproject
+spooling search "database migration" -p myproject
+spooling search ses_e6310bd1                # a session id (or prefix) matches that session first
+spooling search "login issue" --cloud       # search your cloud workspace instead
 ```
+
+Session ids work in the query: a full id, a prefix such as `ses_e6310bd1`, or a UUID/hex prefix of 8+ characters. The matching session is ranked first and labelled `(id match)`. `--cloud` search is matched by the server, so ids are shown but not ranked first.
 
 Options:
 - `-n, --limit` - Number of results (default: 10)
-- `-p, --project` - Filter by project name
+- `-p, --project` - Filter by exact project name (see `spooling session list`)
+- `--cloud` - Search the cloud workspace instead of the local database
+
+### `spooling session`
+
+List sessions and read one back by id.
+
+```bash
+spooling session list                         # newest first, with full session ids
+spooling session list --title login -n 10     # filter by title substring
+spooling session list --id e6310bd1           # filter by id substring
+spooling session list --project myproject --cwd ~/code
+
+spooling session show ses_e6310bd1            # summary: model, tokens, cost, tools used
+spooling session show ses_e6310bd1 -m         # plus the full conversation text
+spooling session show ses_e6310bd1 -m --max-chars 300   # truncate each message
+```
+
+`session show` accepts a full session id or any unique prefix. If a prefix matches several sessions, it lists them and exits so you can pick one.
+
+### `spooling optimize`
+
+Compact the local database. Removes duplicated tool-call rows left by older versions (before 0.2.6), truncates oversized previews, embeds any messages missing from search, and runs `VACUUM`. A backup is written next to the database first, and it is safe to re-run. `spooling sync` prints a hint when it finds duplicates.
+
+```bash
+spooling optimize
+spooling optimize --no-backup --no-vacuum --no-embed   # skip individual steps
+```
 
 ### `spooling watch`
 
@@ -300,11 +333,15 @@ the CLI ships with a `spooling cloud` subcommand.
 Send the most recent local sessions up to the cloud:
 
 ```bash
-spooling push                 # 100 sessions, batches of 20
+spooling push                 # syncs local sessions first, then pushes 100 in batches of 20
 spooling push --limit 500     # bigger backfill
+spooling push --no-sync       # push only what is already in the local database
+spooling push --dry-run       # show what would be pushed
 ```
 
-The server upserts by session id, so re-running is safe.
+`push` ingests new provider sessions into the local database before uploading, so you don't need to run `spooling sync` first. The server upserts by session id, so re-running is safe.
+
+To bring sessions from the cloud back down, use `spooling cloud pull`, or `spooling cloud sync` for both directions.
 
 ### Watch (continuous push)
 
@@ -338,8 +375,8 @@ The cloud API at `api.spooling.ai` uses `/v1/` endpoints. Requests require a Bea
 curl -s "https://api.spooling.ai/v1/stats" \
   -H "Authorization: Bearer $SPOOLING_KEY"
 
-# Search (when deployed — falls back to local search on self-hosted)
-curl -s "https://api.spooling.ai/api/search?q=migration&limit=10" \
+# Search (matches session titles and ids)
+curl -s "https://api.spooling.ai/v1/search?q=migration&limit=10" \
   -H "Authorization: Bearer $SPOOLING_KEY"
 ```
 
@@ -414,7 +451,8 @@ the full config snippet so you don't have to remember it.
 |------|---------|
 | `list_traces` | Recent Spooling traces, filterable by provider/project |
 | `get_trace` | Full detail for one trace: header, spans, eval scores |
-| `search_sessions` | Semantic search over embedded session chunks |
+| `search_sessions` | Semantic search over embedded session chunks. Results include `session_id`; a session id in the query matches that session first |
+| `get_session` | Full detail for one session by id or unique prefix, including the conversation text (`include_messages`, `max_messages`, `max_chars`) |
 | `get_stats` | Top-line stats: traces, tokens, cost, errors |
 | `get_top_vendors` | Most-used external vendors by tool-call count |
 | `list_evals` | Recent eval runs, optionally filtered by rubric |
@@ -426,8 +464,15 @@ the full config snippet so you don't have to remember it.
 For MCP clients that only speak stdio, run `spooling mcp --stdio` and register
 it with the command-based form:
 
-```bash
-# MCP config for stdio transport
+```json
+{
+  "mcpServers": {
+    "spooling": {
+      "command": "spooling",
+      "args": ["mcp", "--stdio"]
+    }
+  }
+}
 ```
 
 ---
@@ -503,7 +548,9 @@ spooling/
 │   ├── parser.py            # Session JSONL parser
 │   ├── embeddings.py        # sentence-transformers (all-MiniLM-L6-v2)
 │   ├── ingest.py            # Sync pipeline
-│   ├── search.py            # Numpy cosine similarity search
+│   ├── search.py            # Numpy cosine similarity search (+ session-id matching)
+│   ├── sessions.py          # Session id lookup helpers
+│   ├── optimize.py          # Database dedupe / compaction
 │   ├── stats.py             # Usage statistics
 │   ├── watcher.py           # File watcher (watchdog)
 │   ├── agent.py             # Chat agent (Ollama + Anthropic)
@@ -547,7 +594,6 @@ All optional — defaults work out of the box.
 | `SPOOLING_DB` | `~/.local/share/spooling/spooling.db` | Path to the SQLite database file (`%APPDATA%\spooling\spooling.db` on Windows) |
 | `SPOOLING_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Sentence transformer model |
 | `SPOOLING_UI_HOST` | `127.0.0.1` | API server host |
-| `SPOOLING_UI_PORT` | `3001` | API server port (used by `spooling serve`) |
 | `SPOOLING_UI_DIR` | *(auto-detected)* | Path to the Next.js `ui/` directory (required for `spooling ui`) |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key (alternative to setting in the GUI) |
 
@@ -568,5 +614,5 @@ All optional — defaults work out of the box.
 
 Run `spooling init` to see which providers are detected on your system.
 
-No data is sent to external servers. Everything runs locally.
+Nothing leaves your machine unless you opt in: Spooling Cloud (`spooling push`), a tunnel (`spooling tunnel`), or the Anthropic chat provider. `spooling pricing refresh` downloads public model prices but sends none of your data.
 

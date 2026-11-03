@@ -73,7 +73,40 @@ def _load_index(conn, dim: int) -> _Index:
 
 
 def search(query: str, limit: int = 10, project: str | None = None) -> list[dict]:
-    """Search session chunks by semantic similarity."""
+    """Search session chunks by semantic similarity.
+
+    Session ids (full or partial) found in the query are matched directly and
+    ranked first, so ids are searchable alongside titles and content.
+    """
+    id_hits = _id_matches(query, project)
+    results = _semantic_search(query, limit, project)
+    seen = {r["session_id"] for r in id_hits}
+    merged = id_hits + [r for r in results if r["session_id"] not in seen]
+    return merged[:limit]
+
+
+def _id_matches(query: str, project: str | None) -> list[dict]:
+    from spooling.sessions import find_sessions_by_id_in_query
+
+    out = []
+    for s in find_sessions_by_id_in_query(query):
+        if project and s["project"] != project:
+            continue
+        out.append({
+            "content": s["title"] or "(untitled)",
+            "role": "session",
+            "project": s["project"],
+            "timestamp": s["started_at"],
+            "session_id": s["id"],
+            "similarity": 1.0,
+            "title": s["title"],
+            "cwd": s["cwd"],
+            "match": "session_id",
+        })
+    return out
+
+
+def _semantic_search(query: str, limit: int = 10, project: str | None = None) -> list[dict]:
     query_arr = np.array(embed_text(query), dtype=np.float32)
 
     conn = get_connection()
