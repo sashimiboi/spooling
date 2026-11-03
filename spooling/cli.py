@@ -138,9 +138,13 @@ def search(query, limit, project, cloud_mode):
             f"[dim]{ts[:19]}[/dim]"
             + (f" [cyan](cloud)[/cyan]" if source == "cloud" else "")
         )
-        if r["title"]:
-            console.print(f"   [dim]Session:[/dim] {r['title']}")
-        console.print(f"   {r['content']}")
+        console.print(
+            f"   [dim]Session:[/dim] {r['title'] or '(untitled)'} "
+            f"[cyan]{r['session_id']}[/cyan]"
+            + (" [yellow](id match)[/yellow]" if r.get("match") == "session_id" else "")
+        )
+        if r.get("match") != "session_id":
+            console.print(f"   {r['content']}")
 
 
 @cli.command()
@@ -1141,8 +1145,9 @@ def session():
 @click.option("--project", "-p", default=None, help="Filter by exact project name")
 @click.option("--cwd", default=None, help="Filter by cwd substring")
 @click.option("--title", default=None, help="Filter by title substring")
+@click.option("--id", "id_part", default=None, help="Filter by session id substring")
 @click.option("--limit", "-n", default=20, help="Max sessions to return (default: 20)")
-def session_list(project, cwd, title, limit):
+def session_list(project, cwd, title, id_part, limit):
     """List local sessions with optional filters."""
     from spooling.db import get_connection
     from datetime import datetime as _dt
@@ -1159,6 +1164,9 @@ def session_list(project, cwd, title, limit):
     if title:
         wheres.append("title LIKE ?")
         params.append(f"%{title}%")
+    if id_part:
+        wheres.append("id LIKE ?")
+        params.append(f"%{id_part}%")
     where_clause = ("WHERE " + " AND ".join(wheres)) if wheres else ""
     params.append(limit)
 
@@ -1176,8 +1184,8 @@ def session_list(project, cwd, title, limit):
         return
 
     table = Table(title=f"Sessions ({len(rows)})", show_lines=False)
-    table.add_column("ID", style="dim")
-    table.add_column("Provider", style="cyan")
+    table.add_column("Session ID", style="cyan", no_wrap=True)
+    table.add_column("Provider")
     table.add_column("Project")
     table.add_column("Title")
     table.add_column("Started", style="dim")
@@ -1194,7 +1202,7 @@ def session_list(project, cwd, title, limit):
                 raw_ts = None
         ts = raw_ts.strftime("%m/%d %H:%M") if raw_ts else ""
         table.add_row(
-            (r["id"] or "")[:12],
+            r["id"] or "",
             r["provider_id"] or "",
             _clean_project(r["project"] or ""),
             (r["title"] or "")[:45],
@@ -1208,10 +1216,21 @@ def session_list(project, cwd, title, limit):
 
 @session.command("show")
 @click.argument("session_id")
-@click.option("--messages", "-m", is_flag=True, help="Show full message content")
-def session_show(session_id, messages):
-    """Show full detail for a session including messages and tool calls."""
+@click.option("--messages", "-m", is_flag=True, help="Print the full session text (all messages)")
+@click.option("--max-chars", default=0, type=int, help="Truncate each message to N chars (0 = no limit)")
+def session_show(session_id, messages, max_chars):
+    """Show a session by id (full id or unique prefix), optionally with its full text."""
     from spooling.stats import get_session_detail
+    from spooling.sessions import resolve_session_ids
+
+    matches = resolve_session_ids(session_id)
+    if len(matches) > 1:
+        console.print(f"[yellow]'{session_id}' is ambiguous; matches:[/yellow]")
+        for m in matches:
+            console.print(f"  {m}")
+        raise SystemExit(1)
+    if matches:
+        session_id = matches[0]
 
     detail = get_session_detail(session_id)
     if not detail:
@@ -1244,23 +1263,19 @@ def session_show(session_id, messages):
         console.print(table)
 
     if messages and detail["messages"]:
-        table = Table(title="Messages", show_lines=True)
-        table.add_column("Role", style="cyan", width=10)
-        table.add_column("Timestamp", style="dim", width=18)
-        table.add_column("Content")
         for m in detail["messages"]:
-            content = (m.get("content") or "")[:300]
+            role = m.get("role") or ""
+            color = "green" if role == "user" else "blue"
+            console.print(f"\n[{color}]{role}[/{color}] [dim]{str(m.get('timestamp') or '')[:19]}[/dim]")
+            content = m.get("content") or ""
+            if max_chars and len(content) > max_chars:
+                content = content[:max_chars] + "..."
+            console.print(content, markup=False, highlight=False)
             if m.get("tool_calls"):
                 tools = ", ".join(tc["name"] for tc in m["tool_calls"])
-                content += f"\n[dim]Tools: {tools}[/dim]"
-            table.add_row(
-                m.get("role", ""),
-                str(m.get("timestamp") or "")[:18],
-                content,
-            )
-        console.print(table)
+                console.print(f"Tools: {tools}", style="dim", markup=False)
     elif not messages and detail["messages"]:
-        console.print(f"[dim]{len(detail['messages'])} messages — pass --messages to show content[/dim]")
+        console.print(f"[dim]{len(detail['messages'])} messages — pass --messages to print the session text[/dim]")
 
 
 # ---------------------------------------------------------------------------
