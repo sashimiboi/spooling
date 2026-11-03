@@ -133,3 +133,22 @@ def test_cli_session_show_and_list(conn):
     assert res.exit_code == 0
     assert UU1 in res.output
     assert OC1 not in res.output
+
+
+def test_cli_session_id_shortcut_and_not_found(conn):
+    from spooling.cli import cli
+
+    r = CliRunner()
+    res = r.invoke(cli, ["session", "ses_e6310bd1", "-m"])   # no 'show'
+    assert res.exit_code == 0, res.output
+    assert "hello from login issue" in res.output
+
+    res = r.invoke(cli, ["session", "nosuchcommand"])
+    assert res.exit_code == 1
+    assert "not found" in res.output.lower()
+
+    res = r.invoke(cli, ["session", "list", "--id", "0b104f33"], env={"COLUMNS": "200"})
+    assert res.exit_code == 0                                # real subcommands still win
+
+    res = r.invoke(cli, ["session"])                         # bare group shows help
+    assert "show" in res.output and "list" in res.output
