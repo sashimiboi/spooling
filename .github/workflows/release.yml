@@ -6,8 +6,12 @@ on:
       - "v*"          # trigger on v0.2.0, v1.0.0, etc.
 
 jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
   build-and-publish:
     name: Build and publish
+    needs: test
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -33,4 +37,4 @@ jobs:
         # Uses OIDC Trusted Publishing — no PYPI_API_TOKEN secret needed.
         # One-time setup on pypi.org:
         #   Your projects → spooling → Publishing → Add a publisher
-        #   Owner: sashimiboi  Repo: spooling  Workflow: publish.yml  Env: pypi
+        #   Owner: sashimiboi  Repo: spooling  Workflow: release.yml  Env: pypi
