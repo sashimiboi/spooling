@@ -1135,9 +1135,27 @@ def redact(path, session_id, show):
 # Sessions
 # ---------------------------------------------------------------------------
 
-@cli.group()
+class _SessionGroup(click.Group):
+    """`spooling session <id>` is shorthand for `spooling session show <id>`."""
+
+    def resolve_command(self, ctx, args):
+        try:
+            return super().resolve_command(ctx, args)
+        except click.UsageError:
+            if args and not args[0].startswith("-") and "show" in self.commands:
+                return "show", self.commands["show"], args
+            raise
+
+
+@cli.group(cls=_SessionGroup)
 def session():
-    """Inspect and list local sessions."""
+    """Inspect and list local sessions.
+
+    \b
+    spooling session list                  list sessions with ids
+    spooling session show ID -m            read a session's full text
+    spooling session ID -m                 same as 'show ID'
+    """
     pass
 
 
@@ -1234,8 +1252,12 @@ def session_show(session_id, messages, max_chars):
 
     detail = get_session_detail(session_id)
     if not detail:
-        console.print(f"[yellow]Session not found: {session_id}[/yellow]")
-        return
+        console.print(
+            f"[yellow]Session not found: {session_id}[/yellow]\n"
+            "[dim]Find ids with 'spooling session list --id PART' or 'spooling search QUERY'. "
+            "If the session is recent, run 'spooling sync' first.[/dim]"
+        )
+        raise SystemExit(1)
 
     s = detail["session"]
     console.print(Panel(

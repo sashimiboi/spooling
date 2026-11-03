@@ -152,7 +152,7 @@ spooling session show ses_e6310bd1 -m         # plus the full conversation text
 spooling session show ses_e6310bd1 -m --max-chars 300   # truncate each message
 ```
 
-`session show` accepts a full session id or any unique prefix. If a prefix matches several sessions, it lists them and exits so you can pick one.
+`spooling session <id> -m` is shorthand for `spooling session show <id> -m`. `session show` accepts a full session id or any unique prefix. If a prefix matches several sessions, it lists them and exits so you can pick one.
 
 ### `spooling optimize`
 
