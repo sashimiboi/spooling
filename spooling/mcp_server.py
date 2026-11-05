@@ -161,7 +161,7 @@ def list_traces(
 
     Args:
         limit: Max rows to return (default 25, capped at 200).
-        provider: Filter to one provider id (jsonl-session, codex, cursor, copilot, windsurf, kiro, antigravity, gemini, opencode).
+        provider: Filter to one provider id (claude-code, jsonl-session, codex, cursor, copilot, windsurf, kiro, antigravity, gemini, opencode).
         project: Filter to sessions whose project name matches exactly.
     """
     limit = max(1, min(limit, 200))

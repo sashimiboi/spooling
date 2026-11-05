@@ -304,8 +304,19 @@ def _tool_result_text(block: dict) -> tuple[str, bool | None]:
     return "", is_error
 
 
-def parse_session_file(file_path: Path) -> ParsedSession | None:
-    """Parse a single session JSONL file into messages + trace."""
+def parse_session_file(
+    file_path: Path,
+    provider_id: str = "jsonl-session",
+    project_from_cwd: bool = False,
+) -> ParsedSession | None:
+    """Parse a single session JSONL file into messages + trace.
+
+    ``provider_id`` is stamped on both the session and its trace (the generic
+    ``jsonl-session`` reader and the ``claude-code`` provider share this parser).
+    With ``project_from_cwd`` the project is the working directory's basename,
+    matching Codex/Gemini/opencode, instead of the on-disk folder name (which for
+    Claude Code is the whole path with slashes replaced by dashes).
+    """
     session_id = file_path.stem
     project = file_path.parent.name
 
@@ -344,8 +355,13 @@ def parse_session_file(file_path: Path) -> ParsedSession | None:
         agent_version = agent_version or r.get("version")
         if not model:
             m = (r.get("message") or {}).get("model")
-            if m:
+            # "<synthetic>" marks locally generated placeholder messages
+            # (interrupts, API errors), not a real model.
+            if m and m != "<synthetic>":
                 model = m
+
+    if project_from_cwd and cwd:
+        project = Path(cwd.rstrip("/")).name or project
 
     # --- Build ParsedMessage list (legacy path, with tool details) -------
     messages: list[ParsedMessage] = []
@@ -422,6 +438,7 @@ def parse_session_file(file_path: Path) -> ParsedSession | None:
         git_branch=git_branch,
         model=model,
         title=title,
+        provider_id=provider_id,
     )
 
     return ParsedSession(
@@ -435,6 +452,7 @@ def parse_session_file(file_path: Path) -> ParsedSession | None:
         agent_version=agent_version,
         model=model,
         title=title,
+        provider_id=provider_id,
         trace=trace,
     )
 
@@ -467,6 +485,7 @@ def _build_trace(
     git_branch: str | None,
     model: str | None,
     title: str | None,
+    provider_id: str = "jsonl-session",
 ) -> Trace:
     """Build a Trace with span tree from session records.
 
@@ -479,7 +498,7 @@ def _build_trace(
                 └─ tool ...
     """
     tb = TraceBuilder(
-        provider_id="jsonl-session",
+        provider_id=provider_id,
         session_id=session_id,
         project=project,
         cwd=cwd,

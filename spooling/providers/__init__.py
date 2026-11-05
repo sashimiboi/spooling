@@ -2,6 +2,7 @@
 
 from spooling.providers.base import Provider, RemoteProvider, PROVIDER_REGISTRY
 from spooling.providers.session_file import SessionFileProvider
+from spooling.providers.claude_code import ClaudeCodeProvider
 from spooling.providers.codex import CodexProvider
 from spooling.providers.cursor import CursorProvider
 from spooling.providers.copilot import CopilotProvider
@@ -19,6 +20,7 @@ __all__ = [
     "RemoteProvider",
     "PROVIDER_REGISTRY",
     "SessionFileProvider",
+    "ClaudeCodeProvider",
     "CodexProvider",
     "CursorProvider",
     "CopilotProvider",

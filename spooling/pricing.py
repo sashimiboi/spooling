@@ -48,6 +48,7 @@ _GEMINI_ZERO_MINOR = re.compile(r"^(gemini-\d+)-0(-)")
 # "auto"), substitute the provider's documented default before pricing.
 # Source: each provider's docs, picked as the most-common-actual-model.
 PROVIDER_DEFAULT_MODEL: dict[str, str] = {
+    "claude-code":   "claude-sonnet-4-5",
     "copilot":       "gpt-4o",
     "cursor":        "gpt-4o",
     "windsurf":      "gpt-4o",

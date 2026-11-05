@@ -108,6 +108,13 @@ async def api_search(
 # --- Providers / Connections ---
 
 PROVIDER_TEMPLATES = {
+    "claude-code": {
+        "name": "Claude Code",
+        "icon": "claude",
+        "default_path": "~/.claude/projects",
+        "description": "Anthropic's Claude Code CLI. One JSONL transcript per session, with per-message token and prompt-cache usage.",
+        "status_hint": "Auto-detected from ~/.claude/projects/",
+    },
     "jsonl-session": {
         "name": "Session Files",
         "icon": "file",
