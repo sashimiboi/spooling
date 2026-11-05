@@ -64,7 +64,7 @@ def init():
 
 @cli.command()
 @click.option("--no-embed", is_flag=True, help="Skip embedding (faster sync)")
-@click.option("--provider", "-p", default=None, help="Only sync a specific provider (jsonl-session, codex, cursor, copilot, windsurf)")
+@click.option("--provider", "-p", default=None, help="Only sync a specific provider (claude-code, jsonl-session, codex, cursor, copilot, windsurf)")
 def sync(no_embed, provider):
     """Sync AI coding sessions to the database."""
     from spooling.ingest import sync as do_sync

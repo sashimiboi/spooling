@@ -2,7 +2,7 @@
 
 Local session tracker and semantic search for AI coding assistants.
 
-Track your AI coding sessions across **OpenAI Codex CLI**, **GitHub Copilot**, **Cursor**, **Windsurf**, **Kiro**, **Google Antigravity**, and **opencode**, all in one place. Get usage stats, cost estimates, per-provider breakdowns, semantic search, and a built-in AI chat agent to explore your history.
+Track your AI coding sessions across **Claude Code**, **OpenAI Codex CLI**, **GitHub Copilot**, **Cursor**, **Windsurf**, **Kiro**, **Google Antigravity**, and **opencode**, all in one place. Get usage stats, cost estimates, per-provider breakdowns, semantic search, and a built-in AI chat agent to explore your history.
 
 **Website:** [spooling.ai](https://spooling.ai)
 
@@ -106,6 +106,7 @@ spooling sync                      # Full sync with embeddings
 spooling sync --no-embed           # Skip embeddings (faster initial sync)
 spooling sync -p cursor            # Sync only Cursor sessions
 spooling sync -p codex             # Sync only Codex CLI sessions
+spooling sync -p claude-code       # Sync only Claude Code sessions
 ```
 
 ### `spooling stats`
@@ -603,6 +604,7 @@ All optional — defaults work out of the box.
 
 | Provider | Data Location | Format |
 |----------|--------------|--------|
+| **Claude Code** | `~/.claude/projects/` (or `$CLAUDE_CONFIG_DIR/projects`) | `<project>/<session-uuid>.jsonl` transcripts with per-message token usage, prompt-cache reads/writes, tool calls and git context |
 | **JSONL Sessions** | `~/.sessions/projects/` | UUID-named JSONL files with conversation history, tool calls, git context |
 | **OpenAI Codex CLI** | `~/.codex/sessions/` | `rollout-*.jsonl` files organized by date |
 | **GitHub Copilot** | `~/Library/Application Support/Code/User/workspaceStorage/` | Chat session JSON from VS Code |
@@ -613,6 +615,8 @@ All optional — defaults work out of the box.
 | **opencode** | `~/.local/share/opencode/opencode.db` | sst/opencode SQLite database with session/message/part tables (Vercel AI SDK part shape) |
 
 Run `spooling init` to see which providers are detected on your system.
+
+**Claude Code notes.** Sessions are detected automatically; there is nothing to connect. Cost is computed from each message's real token usage (including prompt-cache reads and writes) at the model's list price, so it reflects API-equivalent spend, not what a subscription plan charges. The project name is the session's working directory. To read transcripts from somewhere else, set `CLAUDE_CONFIG_DIR` or add `{"claude-code": "/path/to/projects"}` to `~/.config/spooling/paths.json`. Subagent transcripts (stored in separate files under `<session>/subagents/` by recent Claude Code versions) are not included yet.
 
 Nothing leaves your machine unless you opt in: Spooling Cloud (`spooling push`), a tunnel (`spooling tunnel`), or the Anthropic chat provider. `spooling pricing refresh` downloads public model prices but sends none of your data.
 
