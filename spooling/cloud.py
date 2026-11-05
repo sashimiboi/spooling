@@ -4,13 +4,17 @@ import json
 import os
 import re
 import signal
+import socket
+import ssl
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import click
 import httpx
 from rich.console import Console
+from rich.markup import escape
 
 from spooling.db import get_connection
 from spooling.redact import redact_messages, redact_traces
@@ -70,6 +74,143 @@ def _api_base() -> str:
     return cfg.get("api_url") or os.environ.get("SPOOLING_CLOUD_URL") or DEFAULT_API
 
 
+# --- Friendly network errors -------------------------------------------------
+#
+# Raw exceptions like "[Errno 8] nodename nor servname provided, or not known"
+# tell a user nothing. Everything that talks to the cloud funnels its errors
+# through _explain_error / _explain_http so they get a plain-English cause and
+# the next step.
+
+_SELF_HOST_HINT = (
+    "Using a self-hosted or staging server? Point the CLI at it with\n"
+    "    spooling cloud login --key sk_... --api-url https://your-host\n"
+    "  or set SPOOLING_CLOUD_URL."
+)
+
+
+def _host_port(base: str) -> tuple[str, int]:
+    try:
+        u = urlparse(base)
+        host = u.hostname or base
+        port = u.port or (80 if u.scheme == "http" else 443)
+    except ValueError:  # e.g. port out of range in a hand-typed URL
+        return base, 443
+    return host, port
+
+
+def _exc_chain(e: BaseException):
+    seen = set()
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        yield e
+        e = e.__cause__ or e.__context__
+
+
+_DNS_MARKERS = (
+    "nodename nor servname",          # macOS
+    "name or service not known",      # Linux (glibc)
+    "temporary failure in name resolution",
+    "no address associated with hostname",
+    "getaddrinfo failed",             # Windows
+    "no such host",
+)
+
+
+def _is_dns_error(e: BaseException) -> bool:
+    for x in _exc_chain(e):
+        if isinstance(x, socket.gaierror):
+            return True
+        if any(m in str(x).lower() for m in _DNS_MARKERS):
+            return True
+    return False
+
+
+def _explain_error(e: BaseException, base: str) -> str:
+    """Return a plain-English explanation (rich markup) for a failed request.
+
+    Never raises: it runs inside error handlers, where a second exception would
+    hide the original problem.
+    """
+    try:
+        return _explain_error_impl(e, base)
+    except Exception:  # noqa: BLE001
+        return escape(str(e) or type(e).__name__)
+
+
+def _explain_error_impl(e: BaseException, base: str) -> str:
+    host, port = _host_port(base)
+    chain = list(_exc_chain(e))
+    if _is_dns_error(e):
+        return (
+            f"Can't reach Spooling Cloud at {escape(base)}\n"
+            f"  The hostname '{escape(host)}' doesn't resolve (DNS lookup failed).\n"
+            f"  Either you're offline, or that server doesn't exist (yet).\n"
+            f"  - Offline or on a VPN? Check your connection and try again.\n"
+            f"  - {_SELF_HOST_HINT}"
+        )
+    if any(isinstance(x, ConnectionRefusedError) for x in chain):
+        return (
+            f"Connection refused by {escape(host)}:{port}\n"
+            f"  The host is reachable but nothing is listening. Is the sync server running?\n"
+            f"  - {_SELF_HOST_HINT}"
+        )
+    if isinstance(e, httpx.TimeoutException) or any(isinstance(x, (TimeoutError, socket.timeout)) for x in chain):
+        return (
+            f"Timed out talking to {escape(base)}\n"
+            f"  The server may be starting up or overloaded. Try again in a moment."
+        )
+    if any(isinstance(x, ssl.SSLError) for x in chain):
+        return (
+            f"TLS/SSL error connecting to {escape(host)}\n"
+            f"  {escape(str(e))}\n"
+            f"  Check the server's certificate, and that the URL scheme (http/https) is right."
+        )
+    if isinstance(e, httpx.ConnectError):
+        return f"Can't connect to {escape(base)}: {escape(str(e) or type(e).__name__)}"
+    return escape(str(e) or type(e).__name__)
+
+
+def _explain_http(e: "httpx.HTTPStatusError") -> str:
+    code = e.response.status_code
+    body = escape(e.response.text[:200])
+    if code == 401:
+        return (
+            f"HTTP 401: the server rejected your API key.\n"
+            f"  Create a new key in the admin app (Settings > API keys), then run\n"
+            f"    spooling cloud login --key sk_...\n"
+            f"  {body}"
+        )
+    if code == 403:
+        return f"HTTP 403: this API key isn't allowed to do that (missing scope or no workspace).\n  {body}"
+    if code == 429:
+        retry = e.response.headers.get("retry-after")
+        return f"HTTP 429: rate limited{f', retry in {retry}s' if retry else ''}. Slow down or try again shortly."
+    if code >= 500:
+        return f"HTTP {code}: the server hit an error. This is not a problem with your data; try again shortly.\n  {body}"
+    return f"HTTP {code}: {body}"
+
+
+def _fail(message: str) -> "None":
+    """Print an error and exit non-zero so scripts and cron can detect it."""
+    console.print(f"[red]{message}[/red]")
+    raise click.exceptions.Exit(1)
+
+
+def _preflight(base: str) -> None:
+    """Fail fast, before any sync/redaction work, if the server can't be resolved.
+
+    Only checks DNS (no request is sent, so it works with any server version).
+    Connection-level problems are still reported by the request itself.
+    """
+    host, port = _host_port(base)
+    try:
+        socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as e:
+        console.print(f"[red]{_explain_error(e, base)}[/red]")
+        console.print("[dim]Nothing was sent. Your local sessions are untouched.[/dim]")
+        raise click.exceptions.Exit(1)
+
+
 @click.group()
 def cloud():
     """Spooling Cloud: push local sessions to api.spooling.ai."""
@@ -93,8 +234,10 @@ def cloud_login(key: str, api_url: str | None):
         stats = r.json()
         console.print(f"[green]Logged in to {base}[/green]")
         console.print(f"  sessions in cloud: [bold]{stats.get('sessions', 0)}[/bold]")
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Saved key, but the server rejected the check:\n  {_explain_http(e)}[/red]")
     except Exception as e:
-        console.print(f"[red]Saved key, but /v1/stats check failed: {e}[/red]")
+        console.print(f"[red]Saved key, but couldn't verify it.\n  {_explain_error(e, base)}[/red]")
 
 
 @cloud.command("status")
@@ -114,8 +257,10 @@ def cloud_status():
         console.print(f"  messages: [bold]{s.get('messages', 0)}[/bold]")
         console.print(f"  providers: [bold]{s.get('providers', 0)}[/bold]")
         console.print(f"  cost: [bold]${s.get('cost', 0):.2f}[/bold]")
+    except httpx.HTTPStatusError as e:
+        _fail(f"{_explain_http(e)}")
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
+        _fail(f"{_explain_error(e, base)}")
 
 
 @cloud.command("logout")
@@ -395,14 +540,9 @@ def _push_trace_batches(
                 else:
                     log(f"  pushed {acc} trace(s), {spans} span(s)")
             except httpx.HTTPStatusError as e:
-                return (
-                    accepted,
-                    rejected,
-                    spans_total,
-                    f"HTTP {e.response.status_code}: {e.response.text[:200]}",
-                )
+                return accepted, rejected, spans_total, _explain_http(e)
             except Exception as e:
-                return accepted, rejected, spans_total, str(e)
+                return accepted, rejected, spans_total, _explain_error(e, base)
     return accepted, rejected, spans_total, None
 
 
@@ -448,9 +588,9 @@ def _push_batches(
                 else:
                     log(f"  pushed {accepted} sessions")
             except httpx.HTTPStatusError as e:
-                return total, rejected, f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                return total, rejected, _explain_http(e)
             except Exception as e:
-                return total, rejected, str(e)
+                return total, rejected, _explain_error(e, base)
     return total, rejected, None
 
 
@@ -559,6 +699,8 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, ti
         return
     headers = _auth_headers()
     base = _api_base()
+    if not dry_run:
+        _preflight(base)  # fail fast, before syncing and redacting, if the server can't be reached
     if do_sync:
         _sync_local()
     sessions = _collect_sessions(
@@ -607,8 +749,7 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, ti
         return
     total, rejected, err = _push_batches(sessions, batch, base, headers, console.print, copy=copy)
     if err:
-        console.print(f"[red]{err}[/red]")
-        return
+        _fail(err)
     if rejected:
         console.print(
             f"[green]Done.[/green] {total} sessions synced to {base} "
@@ -649,8 +790,7 @@ def push(limit: int, batch: int, project: str | None, cwd_substr: str | None, ti
             traces, trace_batch_size, base, headers, console.print,
         )
         if t_err:
-            console.print(f"[yellow]Trace push failed: {t_err}[/yellow]")
-            return
+            _fail(f"Sessions were pushed, but the trace/span upload failed:\n  {t_err}")
         msg = f"[green]Done.[/green] {t_acc} trace(s) and {t_spans} span(s) synced"
         if t_rej:
             msg += f" ([yellow]{t_rej} trace(s) rejected[/yellow])"
@@ -715,7 +855,7 @@ def cloud_watch(interval: int, limit: int, batch: int, lookback: int, no_redact:
                     console.print(f"  [dim]Redacted {redaction_count} secret(s) before push[/dim]")
             total, rejected, err = _push_batches(sessions, batch, base, headers, console.print)
             if err:
-                console.print(f"[red]{err}[/red] (will retry next cycle)")
+                console.print(f"[red]{err.splitlines()[0]}[/red] (will retry next cycle)")
             else:
                 # Advance watermark to the cycle start; the lookback window catches
                 # sessions whose started_at slid backwards or whose messages were
@@ -790,6 +930,7 @@ def cloud_delete(project: str | None, cwd_substr: str | None, session_id: str | 
 
     headers = _auth_headers()
     base = _api_base()
+    _preflight(base)
     params = {"dry_run": "true" if dry_run else "false"}
     if project:
         params["project"] = project
@@ -810,10 +951,10 @@ def cloud_delete(project: str | None, cwd_substr: str | None, session_id: str | 
         r.raise_for_status()
         data = r.json()
     except httpx.HTTPStatusError as e:
-        console.print(f"[red]HTTP {e.response.status_code}: {e.response.text[:200]}[/red]")
+        console.print(f"[red]{_explain_http(e)}[/red]")
         return
     except Exception as e:
-        console.print(f"[red]{e}[/red]")
+        console.print(f"[red]{_explain_error(e, base)}[/red]")
         return
 
     matched = data.get("matched", 0)
@@ -928,9 +1069,9 @@ def _pull_sessions(
             r = client.get(f"{base}/v1/sessions", headers=headers, params=params)
             r.raise_for_status()
         except httpx.HTTPStatusError as e:
-            return 0, 0, f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+            return 0, 0, _explain_http(e)
         except Exception as e:
-            return 0, 0, str(e)
+            return 0, 0, _explain_error(e, base)
 
         data = r.json()
         cloud_sessions = data.get("sessions", [])
@@ -979,6 +1120,7 @@ def pull(limit: int, batch: int, dry_run: bool):
     """
     headers = _auth_headers()
     base = _api_base()
+    _preflight(base)
 
     cfg = _load_config()
     last = cfg.get("last_pull_at")
@@ -996,10 +1138,10 @@ def pull(limit: int, batch: int, dry_run: bool):
         r = httpx.get(f"{base}/v1/sessions", headers=headers, params=params, timeout=30)
         r.raise_for_status()
     except httpx.HTTPStatusError as e:
-        console.print(f"[red]HTTP {e.response.status_code}: {e.response.text[:200]}[/red]")
+        console.print(f"[red]{_explain_http(e)}[/red]")
         return
     except Exception as e:
-        console.print(f"[red]{e}[/red]")
+        console.print(f"[red]{_explain_error(e, base)}[/red]")
         return
 
     data = r.json()
@@ -1070,6 +1212,7 @@ def sync(limit: int, batch: int, project: str | None, cwd_substr: str | None, ti
     """
     headers = _auth_headers()
     base = _api_base()
+    _preflight(base)
 
     # Phase 1: Push local → cloud
     console.print("[bold]Phase 1: Push local → cloud[/bold]")
@@ -1115,10 +1258,10 @@ def sync(limit: int, batch: int, project: str | None, cwd_substr: str | None, ti
         r = httpx.get(f"{base}/v1/sessions", headers=headers, params=params, timeout=30)
         r.raise_for_status()
     except httpx.HTTPStatusError as e:
-        console.print(f"  [red]HTTP {e.response.status_code}: {e.response.text[:200]}[/red]")
+        console.print(f"  [red]{_explain_http(e)}[/red]")
         return
     except Exception as e:
-        console.print(f"  [red]{e}[/red]")
+        console.print(f"  [red]{_explain_error(e, base)}[/red]")
         return
 
     data = r.json()
