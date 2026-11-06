@@ -29,3 +29,12 @@ def test_readme_documents_every_push_scoping_option():
     for opt in ("--project", "--cwd", "--title", "--copy", "--with-spans", "--dry-run", "--no-redact", "cloud login --key sk_<team-key>"):
         assert opt in readme, f"README does not mention {opt}"
     assert "stats --by" not in readme
+
+
+def test_readme_documents_the_team_commands():
+    from pathlib import Path
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+    for cmd in ("spooling cloud teams", "spooling cloud whoami"):
+        assert cmd in readme
+    out = CliRunner().invoke(cli, ["cloud", "--help"]).output
+    assert "teams" in out and "whoami" in out
