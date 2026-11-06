@@ -65,10 +65,11 @@ def init():
 @cli.command()
 @click.option("--no-embed", is_flag=True, help="Skip embedding (faster sync)")
 @click.option("--provider", "-p", default=None, help="Only sync a specific provider (claude-code, jsonl-session, codex, cursor, copilot, windsurf)")
-def sync(no_embed, provider):
+@click.option("--reparse", is_flag=True, help="Re-read session files even if they look unchanged (rebuilds traces/spans)")
+def sync(no_embed, provider, reparse):
     """Sync AI coding sessions to the database."""
     from spooling.ingest import sync as do_sync
-    do_sync(embed=not no_embed, provider_filter=provider)
+    do_sync(embed=not no_embed, provider_filter=provider, reparse=reparse)
 
 
 @cli.command()
@@ -1475,8 +1476,9 @@ def agents_cmd(tools, cloud_mode, days, project, provider, limit, as_json):
     if not rows:
         console.print(
             "[yellow]No agent spans found locally.[/yellow]\n"
-            "[dim]Agent runs are recorded for providers that expose subagents (e.g. Claude Code's Task tool). "
-            "Run 'spooling sync' after using one, or try 'spooling agents --cloud'.[/dim]"
+            "[dim]Agent runs are recorded for providers that expose subagents (currently Claude Code, via its "
+            "Agent/Task tool). Run 'spooling sync' after using one, or try 'spooling agents --cloud'.\n"
+            "If you use Claude Code and still see this, run 'spooling sync --reparse -p claude-code'.[/dim]"
         )
         return
     table = Table(title="Agents" + (f" that called {', '.join(tools)}" if tools else ""), show_lines=False)

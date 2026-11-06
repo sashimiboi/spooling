@@ -61,6 +61,11 @@ class Provider(ABC):
     # ``parse_session_file`` so unchanged sessions are skipped cheaply.
     incremental: bool = False
 
+    # Bump when a parser fix changes what is extracted from files that were
+    # already synced (e.g. a new span type). Ingest then re-reads this
+    # provider's files once, instead of skipping them as "unchanged".
+    parser_revision: int = 0
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         # Don't register the abstract RemoteProvider base.
