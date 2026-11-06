@@ -15,6 +15,7 @@ import click
 import httpx
 from rich.console import Console
 from rich.markup import escape
+from rich.table import Table
 
 from spooling.db import get_connection
 from spooling.redact import redact_messages, redact_traces
@@ -253,6 +254,10 @@ def cloud_status():
         r.raise_for_status()
         s = r.json()
         console.print(f"API: [cyan]{base}[/cyan]")
+        me = _fetch_me(required=False)
+        if me and me.get("workspace"):
+            ws = me["workspace"]
+            console.print(f"  workspace: [bold]{escape(ws['name'])}[/bold] [dim]({_kind_label(ws)})[/dim]")
         console.print(f"  sessions: [bold]{s.get('sessions', 0)}[/bold]")
         console.print(f"  messages: [bold]{s.get('messages', 0)}[/bold]")
         console.print(f"  providers: [bold]{s.get('providers', 0)}[/bold]")
@@ -261,6 +266,93 @@ def cloud_status():
         _fail(f"{_explain_http(e)}")
     except Exception as e:
         _fail(f"{_explain_error(e, base)}")
+
+
+def _fetch_me(*, required: bool) -> dict | None:
+    """GET /v1/me: who this key is and which workspaces its user belongs to.
+
+    ``required=False`` is for best-effort extras (returns None on any problem);
+    ``required=True`` explains failures and exits non-zero.
+    """
+    headers = _auth_headers()
+    base = _api_base()
+    try:
+        r = httpx.get(f"{base}/v1/me", headers=headers, timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except httpx.HTTPStatusError as e:
+        if not required:
+            return None
+        if e.response.status_code == 404:
+            _fail(
+                "This server is older than the CLI and can't list workspaces yet.\n"
+                "  Ask your admin to redeploy it. Meanwhile `spooling cloud status`\n"
+                "  shows the totals of the workspace your key belongs to."
+            )
+        _fail(_explain_http(e))
+    except Exception as e:  # noqa: BLE001
+        if not required:
+            return None
+        _fail(_explain_error(e, base))
+
+
+def _kind_label(w: dict) -> str:
+    return "Personal" if w.get("kind") == "personal" else "Team"
+
+
+@cloud.command("whoami")
+@click.option("--json", "as_json", is_flag=True, help="Print JSON instead of text")
+def cloud_whoami(as_json: bool):
+    """Show which account and workspace (team) this CLI pushes to.
+
+    The workspace is decided by the API key you logged in with. Use
+    `spooling cloud teams` to see every workspace you belong to.
+    """
+    me = _fetch_me(required=True)
+    if as_json:
+        click.echo(json.dumps(me, indent=2))
+        return
+    user, ws = me["user"], me.get("workspace")
+    who = user.get("email") or user.get("name") or user.get("id")
+    console.print(f"Account:   [bold]{escape(str(who))}[/bold]")
+    if ws:
+        role = f", you are {ws['role']}" if ws.get("role") else ""
+        members = f", {ws['members']} member{'s' if ws['members'] != 1 else ''}" if ws.get("members") is not None else ""
+        console.print(f"Workspace: [bold cyan]{escape(ws['name'])}[/bold cyan] [dim]({_kind_label(ws)}{role}{members}, {ws.get('plan', 'free')} plan)[/dim]")
+    console.print(f"API:       [dim]{_api_base()}[/dim]")
+    console.print("[dim]`spooling push` sends sessions to this workspace. See all of yours with `spooling cloud teams`.[/dim]")
+
+
+@cloud.command("teams")
+@click.option("--json", "as_json", is_flag=True, help="Print JSON instead of a table")
+def cloud_teams(as_json: bool):
+    """List every workspace (personal + teams) your account belongs to.
+
+    The row marked ``<- this key`` is where `spooling push` sends sessions.
+    To push somewhere else, log in with that team's API key:
+    `spooling cloud login --key sk_<team-key>`.
+    """
+    me = _fetch_me(required=True)
+    if as_json:
+        click.echo(json.dumps(me["workspaces"], indent=2))
+        return
+    rows = me["workspaces"]
+    table = Table(title="Your workspaces", show_lines=False)
+    table.add_column("Workspace", style="cyan")
+    table.add_column("Type")
+    table.add_column("Your role")
+    table.add_column("Members", justify="right")
+    table.add_column("Plan", style="dim")
+    table.add_column("")
+    for w in rows:
+        table.add_row(
+            escape(w["name"]), _kind_label(w), w.get("role") or "-",
+            str(w["members"]) if w.get("members") is not None else "-",
+            w.get("plan", "free"),
+            "[green]<- this key[/green]" if w.get("current") else "",
+        )
+    console.print(table if rows else "[yellow]No workspaces found for this account.[/yellow]")
+    console.print("[dim]A key pushes to one workspace. Switch with `spooling cloud login --key sk_<that team's key>`.[/dim]")
 
 
 @cloud.command("logout")

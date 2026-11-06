@@ -384,11 +384,14 @@ spooling push --dry-run       # show what would be pushed
 **Which team gets the sessions** is decided by the API key you are logged in with. Each key belongs to one workspace (personal or a team), and `spooling push` sends to that workspace. Mint a key for the team in the app, then log in with it:
 
 ```bash
+spooling cloud teams                         # every workspace (personal + teams) your account belongs to
+spooling cloud whoami                        # the account and workspace this CLI pushes to
 spooling cloud login --key sk_<team-key>     # replaces the stored key; later pushes go to this team
-spooling cloud status                        # session/cost totals of the workspace this key belongs to
 ```
 
-To push to a different team, log in with that team's key. Only one key is stored at a time. `cloud status` doesn't print the workspace name, so compare its totals with what the team shows in the app.
+`spooling cloud teams` marks the workspace your current key pushes to with `<- this key`, and shows your role, the number of members and the plan for each. `spooling cloud status` also prints the workspace name now. `teams` and `whoami` take `--json` for scripting.
+
+To push to a different team, log in with that team's key. Only one key is stored at a time, so check `spooling cloud whoami` before a push if you work with several teams. These commands need a server that supports `/v1/me`; against an older one they say so and `spooling cloud status` still works.
 
 **Which sessions go up.** With no filters, `spooling push` sends the most recent `--limit` sessions from every project on the machine. Use these to send only some of them. Filters combine with AND:
 
