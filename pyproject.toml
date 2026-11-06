@@ -1,6 +1,6 @@
 [project]
 name = "spooling"
-version = "0.2.13"
+version = "0.2.14"
 description = "Local session tracker and semantic search for AI coding assistants"
 readme = "README.md"
 authors = [{ name = "Parsed Analytics, Inc." }]

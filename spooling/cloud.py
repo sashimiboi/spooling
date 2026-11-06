@@ -627,7 +627,7 @@ _SYNC_OPTION = click.option(
 @click.option(
     "--project",
     default=None,
-    help="Only push sessions whose project name matches exactly. Pair with `spooling stats --by project` to discover names.",
+    help="Only push sessions whose project name matches exactly. Pair with `spooling cost breakdown --by project` to discover names.",
 )
 @click.option(
     "--cwd",

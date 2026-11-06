@@ -379,6 +379,46 @@ spooling push --dry-run       # show what would be pushed
 
 `push` ingests new provider sessions into the local database before uploading, so you don't need to run `spooling sync` first. The server upserts by session id, so re-running is safe.
 
+### Push only some sessions, or to a specific team
+
+**Which team gets the sessions** is decided by the API key you are logged in with. Each key belongs to one workspace (personal or a team), and `spooling push` sends to that workspace. Mint a key for the team in the app, then log in with it:
+
+```bash
+spooling cloud login --key sk_<team-key>     # replaces the stored key; later pushes go to this team
+spooling cloud status                        # session/cost totals of the workspace this key belongs to
+```
+
+To push to a different team, log in with that team's key. Only one key is stored at a time. `cloud status` doesn't print the workspace name, so compare its totals with what the team shows in the app.
+
+**Which sessions go up.** With no filters, `spooling push` sends the most recent `--limit` sessions from every project on the machine. Use these to send only some of them. Filters combine with AND:
+
+| Option | Matches |
+|---|---|
+| `--project NAME` | Sessions whose project name is exactly `NAME` (find names with `spooling cost breakdown --by project`) |
+| `--cwd TEXT` | Sessions whose working directory contains `TEXT` (case-insensitive) |
+| `--title TEXT` | Sessions whose title contains `TEXT` (case-insensitive). Useful when an agent was launched from your home directory, so every session shares a generic working directory, but the project name is in the title |
+
+```bash
+spooling cloud login --key sk_<team-key>
+spooling push --cwd toebox --dry-run     # preview what would be sent; nothing is uploaded
+spooling push --cwd toebox               # send only sessions from the toebox directory
+spooling push --project my-app --limit 200
+spooling push --title islet              # sessions with "islet" in the title
+```
+
+**Share the same sessions with more than one team.** Add `--copy` to write the sessions into the workspace you are logged into as fresh rows, even if they were already pushed to another workspace. Re-running is safe:
+
+```bash
+spooling cloud login --key sk_<other-team-key>
+spooling push --cwd toebox --copy
+```
+
+**Include trace data.** Add `--with-spans` to also push each session's trace and spans (per-LLM-call usage, cost, tool calls, MCP calls and agent runs). The Traces page in the app, its agent, tool and MCP filters, and `spooling agents --cloud` / `spooling mcps --cloud` all rely on it. `--with-spans` can't be combined with `--copy` yet.
+
+**Secrets** (cloud and AWS keys, GitHub, OpenAI, Anthropic and Stripe tokens, PEM private keys, and `KEY=VALUE` lines whose key looks sensitive) are redacted on your machine before anything is uploaded. Pass `--no-redact` only if you are sure the content is clean.
+
+`spooling cloud watch` has no filters: it keeps pushing every new or updated session to the workspace you are logged into. Use filtered `spooling push` runs when you need to keep some sessions out.
+
 To bring sessions from the cloud back down, use `spooling cloud pull`, or `spooling cloud sync` for both directions.
 
 ### Watch (continuous push)
