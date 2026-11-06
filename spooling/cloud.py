@@ -1332,3 +1332,25 @@ def cloud_stats() -> dict | None:
         return r.json()
     except Exception:
         return None
+
+
+def _cloud_get(path: str, params: dict | None = None):
+    """GET a Spooling Cloud endpoint; on any failure print a plain-English reason and exit 1."""
+    headers = _auth_headers()
+    base = _api_base()
+    try:
+        r = httpx.get(f"{base}{path}", headers=headers, params=params, timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:  # noqa: BLE001
+        _fail(_explain_error(e, base))
+
+
+def cloud_tools(limit: int = 20) -> list[dict]:
+    """Per-tool usage across the cloud workspace (GET /v1/tools)."""
+    return _cloud_get("/v1/tools", {"limit": limit})
+
+
+def cloud_agents() -> list[dict]:
+    """Per-agent-type usage across the cloud workspace (GET /v1/stats/agent-subtypes)."""
+    return _cloud_get("/v1/stats/agent-subtypes").get("agent_subtypes", [])

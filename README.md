@@ -119,6 +119,29 @@ spooling stats --week      # Weekly breakdown
 spooling stats --days 30   # Last 30 days
 ```
 
+### `spooling tools`, `spooling agents`, `spooling traces`
+
+See which tools and agents your sessions use. These read the spans stored by `spooling sync`, and use the same agent/tool names as the web app (an agent is its subagent type, falling back to its span name).
+
+```bash
+spooling tools                       # Top tools: uses, traces, errors, avg time
+spooling tools --agent explore       # Tools called by the "explore" agent
+spooling tools --days 7 --provider claude-code
+
+spooling agents                      # Agents: runs, traces, tokens, cost
+spooling agents --tool Bash          # Agents whose runs called Bash
+
+spooling traces                      # Latest traces, with the agents each ran
+spooling traces ses_10dd             # Search title, project, session id, trace id or agent name
+spooling traces --agent explore --tool Bash --days 30
+```
+
+Common options: `--days N`, `--project TEXT`, `--provider/-p NAME`, `--limit/-n N`, and `--json` for scripting. `--agent` and `--tool` can be repeated (matches any).
+
+`tools --agent` and `agents --tool` look inside an agent's own runs. `traces --agent/--tool` matches whole traces, like the Traces page.
+
+`spooling tools --cloud` and `spooling agents --cloud` show workspace-wide totals from Spooling Cloud. The cloud endpoints only support `--limit`, so combining `--cloud` with other filters is an error. Agent data is only recorded for providers that expose subagents (for example Claude Code's `Task` tool), so `spooling agents` can be empty for other providers.
+
 ### `spooling search <query>`
 
 Semantic search across all your session history using natural language. Each result shows the session title **and its session id**, so you can open it with `spooling session show`.

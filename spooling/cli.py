@@ -1340,6 +1340,207 @@ def stats_providers():
 
 
 # ---------------------------------------------------------------------------
+# Tools / agents / traces insights
+# ---------------------------------------------------------------------------
+
+def _fmt_ms(ms) -> str:
+    if ms is None:
+        return "-"
+    if ms < 1000:
+        return f"{ms:.0f}ms"
+    if ms < 60_000:
+        return f"{ms / 1000:.1f}s"
+    return f"{ms / 60_000:.1f}m"
+
+
+def _fmt_num(n) -> str:
+    n = int(n or 0)
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 10_000:
+        return f"{n / 1000:.1f}K"
+    return f"{n:,}"
+
+
+def _emit_json(data) -> None:
+    import json
+    click.echo(json.dumps(data, indent=2, default=str))
+
+
+def _reject_cloud_filters(**filters) -> None:
+    used = [f"--{k}" for k, v in filters.items() if v]
+    if used:
+        raise click.UsageError(
+            f"{', '.join(used)} can't be combined with --cloud "
+            "(the cloud endpoint only supports --limit). Drop --cloud to filter local data."
+        )
+
+
+_FILTER_OPTS = [
+    click.option("--days", type=int, default=None, help="Only the last N days"),
+    click.option("--project", default=None, help="Project name contains this text"),
+    click.option("--provider", "-p", default=None, help="Only this provider (claude-code, opencode, ...)"),
+    click.option("--limit", "-n", type=int, default=20, show_default=True, help="Max rows"),
+    click.option("--json", "as_json", is_flag=True, help="Print JSON instead of a table"),
+]
+
+
+def _filter_opts(fn):
+    for opt in reversed(_FILTER_OPTS):
+        fn = opt(fn)
+    return fn
+
+
+@cli.command("tools")
+@click.option("--agent", "agents", multiple=True, help="Only tools called by this agent (repeatable)")
+@click.option("--cloud", "cloud_mode", is_flag=True, help="Use the cloud workspace instead of local data")
+@_filter_opts
+def tools_cmd(agents, cloud_mode, days, project, provider, limit, as_json):
+    """Show which tools are used, how often, and how often they fail.
+
+    \b
+    spooling tools                      top tools across all traces
+    spooling tools --agent explore      tools called by the 'explore' agent
+    spooling tools --days 7 --json
+    spooling tools --cloud              workspace-wide, from Spooling Cloud
+    """
+    if cloud_mode:
+        _reject_cloud_filters(agent=agents, days=days, project=project, provider=provider)
+        from spooling.cloud import cloud_tools
+        rows = cloud_tools(limit)
+        if as_json:
+            return _emit_json(rows)
+        table = Table(title="Tools (cloud)", show_lines=False)
+        table.add_column("Tool", style="cyan")
+        table.add_column("Uses", justify="right")
+        table.add_column("Sessions", justify="right")
+        table.add_column("Errors", justify="right")
+        for r in rows:
+            table.add_row(r["tool_name"], _fmt_num(r["uses"]), _fmt_num(r["sessions"]),
+                          f"[red]{r['errors']}[/red]" if r["errors"] else "0")
+        console.print(table if rows else "[yellow]No tool data in the cloud workspace yet.[/yellow]")
+        return
+
+    from spooling.insights import tool_stats
+    rows = tool_stats(days=days, project=project, provider=provider, agents=list(agents) or None, limit=limit)
+    if as_json:
+        return _emit_json(rows)
+    if not rows:
+        console.print("[yellow]No tool data found. Run 'spooling sync' first"
+                      + (" (agent filters need traces that contain agent spans)." if agents else ".") + "[/yellow]")
+        return
+    table = Table(title="Tools" + (f" called by {', '.join(agents)}" if agents else ""), show_lines=False)
+    table.add_column("Tool", style="cyan")
+    table.add_column("Uses", justify="right")
+    table.add_column("Traces", justify="right")
+    table.add_column("Errors", justify="right")
+    table.add_column("Avg time", justify="right", style="dim")
+    for r in rows:
+        table.add_row(r["name"], _fmt_num(r["uses"]), _fmt_num(r["traces"]),
+                      f"[red]{r['errors']}[/red]" if r["errors"] else "0", _fmt_ms(r["avg_ms"]))
+    console.print(table)
+
+
+@cli.command("agents")
+@click.option("--tool", "tools", multiple=True, help="Only agents that called this tool (repeatable)")
+@click.option("--cloud", "cloud_mode", is_flag=True, help="Use the cloud workspace instead of local data")
+@_filter_opts
+def agents_cmd(tools, cloud_mode, days, project, provider, limit, as_json):
+    """Show which agents (subagent types) ran, how often, and what they cost.
+
+    \b
+    spooling agents                     agents across all traces
+    spooling agents --tool Bash         agents whose runs called Bash
+    spooling agents --days 30 --json
+    spooling agents --cloud             workspace-wide, from Spooling Cloud
+    """
+    if cloud_mode:
+        _reject_cloud_filters(tool=tools, days=days, project=project, provider=provider)
+        from spooling.cloud import cloud_agents
+        rows = cloud_agents()[:limit]
+        if as_json:
+            return _emit_json(rows)
+        table = Table(title="Agents (cloud)", show_lines=False)
+        table.add_column("Agent", style="cyan")
+        table.add_column("Runs", justify="right")
+        for r in rows:
+            table.add_row(r["agent_type"], _fmt_num(r["uses"]))
+        console.print(table if rows else "[yellow]No agent data in the cloud workspace yet.[/yellow]")
+        return
+
+    from spooling.insights import agent_stats
+    rows = agent_stats(days=days, project=project, provider=provider, tools=list(tools) or None, limit=limit)
+    if as_json:
+        return _emit_json(rows)
+    if not rows:
+        console.print(
+            "[yellow]No agent spans found locally.[/yellow]\n"
+            "[dim]Agent runs are recorded for providers that expose subagents (e.g. Claude Code's Task tool). "
+            "Run 'spooling sync' after using one, or try 'spooling agents --cloud'.[/dim]"
+        )
+        return
+    table = Table(title="Agents" + (f" that called {', '.join(tools)}" if tools else ""), show_lines=False)
+    table.add_column("Agent", style="cyan")
+    table.add_column("Runs", justify="right")
+    table.add_column("Traces", justify="right")
+    table.add_column("Tokens", justify="right")
+    table.add_column("Est. Cost", justify="right")
+    table.add_column("Avg time", justify="right", style="dim")
+    for r in rows:
+        table.add_row(r["name"], _fmt_num(r["runs"]), _fmt_num(r["traces"]), _fmt_num(r["tokens"]),
+                      f"${r['cost']:.2f}", _fmt_ms(r["avg_ms"]))
+    console.print(table)
+
+
+@cli.command("traces")
+@click.argument("query", required=False)
+@click.option("--agent", "agents", multiple=True, help="Only traces that ran this agent (repeatable)")
+@click.option("--tool", "tools", multiple=True, help="Only traces that used this tool (repeatable)")
+@click.option("--session", default=None, help="Session id (or unique prefix)")
+@_filter_opts
+def traces_cmd(query, agents, tools, session, days, project, provider, limit, as_json):
+    """List traces, optionally filtered by agent, tool, or free text.
+
+    QUERY matches title, project, session id, trace id or an agent name.
+
+    \b
+    spooling traces                           latest traces
+    spooling traces ses_10dd                  find by session id
+    spooling traces --agent explore           traces that ran the explore agent
+    spooling traces --tool Bash --days 7      traces that used Bash this week
+    """
+    from spooling.insights import list_traces
+    rows = list_traces(query=query, agents=list(agents) or None, tools=list(tools) or None,
+                       session=session, days=days, project=project, provider=provider, limit=limit)
+    if as_json:
+        return _emit_json(rows)
+    if not rows:
+        console.print("[yellow]No traces match. Traces are created by 'spooling sync'.[/yellow]")
+        return
+    table = Table(title=f"Traces ({len(rows)})", show_lines=False, pad_edge=False)
+    table.add_column("Date", style="dim", no_wrap=True)
+    table.add_column("Title", style="cyan", max_width=22, overflow="ellipsis", no_wrap=True)
+    table.add_column("Session", style="dim", no_wrap=True)
+    table.add_column("Agents", max_width=12, overflow="ellipsis", no_wrap=True)
+    table.add_column("Spans", justify="right", no_wrap=True)
+    table.add_column("Tools", justify="right", no_wrap=True)
+    table.add_column("Cost", justify="right", no_wrap=True)
+    for r in rows:
+        ag = r["agents"]
+        ag_txt = ", ".join(ag[:1]) + (f" +{len(ag) - 1}" if len(ag) > 1 else "") if ag else "-"
+        table.add_row(
+            str(r["started_at"] or "")[5:10],
+            r["title"] or "(untitled)",
+            (r["session_id"] or "")[:10],
+            ag_txt,
+            _fmt_num(r["span_count"]),
+            _fmt_num(r["tool_count"]),
+            f"${float(r['total_cost_usd'] or 0):.2f}",
+        )
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
 # Token management
 # ---------------------------------------------------------------------------
 
