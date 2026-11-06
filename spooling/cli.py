@@ -1373,7 +1373,8 @@ def _reject_cloud_filters(**filters) -> None:
     if used:
         raise click.UsageError(
             f"{', '.join(used)} can't be combined with --cloud "
-            "(the cloud endpoint only supports --limit). Drop --cloud to filter local data."
+            "(the cloud endpoint only supports --limit, --search and --mcp). "
+            "Drop --cloud to filter local data."
         )
 
 
@@ -1392,23 +1393,44 @@ def _filter_opts(fn):
     return fn
 
 
+def _error_cell(n) -> str:
+    return f"[red]{n}[/red]" if n else "0"
+
+
+def _cloud_tool_rows(limit: int, search: str | None, mcps) -> list[dict]:
+    """Cloud per-tool rows, filtered client-side by name/MCP server (server caps at 100)."""
+    from spooling.cloud import cloud_tools
+    from spooling.insights import mcp_server_of
+    rows = cloud_tools(100)
+    if search:
+        rows = [r for r in rows if search.lower() in r["tool_name"].lower()]
+    if mcps:
+        rows = [r for r in rows
+                if any(m.lower() in (mcp_server_of(r["tool_name"]) or "").lower() for m in mcps)]
+    return rows[:limit]
+
+
 @cli.command("tools")
 @click.option("--agent", "agents", multiple=True, help="Only tools called by this agent (repeatable)")
+@click.option("--mcp", "mcps", multiple=True, help="Only tools of MCP servers whose name contains this (repeatable)")
+@click.option("--search", "-s", default=None, help="Only tools whose name contains this text")
 @click.option("--cloud", "cloud_mode", is_flag=True, help="Use the cloud workspace instead of local data")
 @_filter_opts
-def tools_cmd(agents, cloud_mode, days, project, provider, limit, as_json):
+def tools_cmd(agents, mcps, search, cloud_mode, days, project, provider, limit, as_json):
     """Show which tools are used, how often, and how often they fail.
+
+    MCP tools are named mcp__<server>__<tool>; use --mcp to see one server's tools.
 
     \b
     spooling tools                      top tools across all traces
+    spooling tools -s read              tools whose name contains "read"
+    spooling tools --mcp spool          tools from MCP servers matching "spool"
     spooling tools --agent explore      tools called by the 'explore' agent
-    spooling tools --days 7 --json
-    spooling tools --cloud              workspace-wide, from Spooling Cloud
+    spooling tools --cloud --mcp github workspace-wide, from Spooling Cloud
     """
     if cloud_mode:
         _reject_cloud_filters(agent=agents, days=days, project=project, provider=provider)
-        from spooling.cloud import cloud_tools
-        rows = cloud_tools(limit)
+        rows = _cloud_tool_rows(limit, search, mcps)
         if as_json:
             return _emit_json(rows)
         table = Table(title="Tools (cloud)", show_lines=False)
@@ -1417,20 +1439,25 @@ def tools_cmd(agents, cloud_mode, days, project, provider, limit, as_json):
         table.add_column("Sessions", justify="right")
         table.add_column("Errors", justify="right")
         for r in rows:
-            table.add_row(r["tool_name"], _fmt_num(r["uses"]), _fmt_num(r["sessions"]),
-                          f"[red]{r['errors']}[/red]" if r["errors"] else "0")
-        console.print(table if rows else "[yellow]No tool data in the cloud workspace yet.[/yellow]")
+            table.add_row(r["tool_name"], _fmt_num(r["uses"]), _fmt_num(r["sessions"]), _error_cell(r["errors"]))
+        console.print(table if rows else "[yellow]No matching tools in the cloud workspace.[/yellow]")
         return
 
     from spooling.insights import tool_stats
-    rows = tool_stats(days=days, project=project, provider=provider, agents=list(agents) or None, limit=limit)
+    rows = tool_stats(days=days, project=project, provider=provider, agents=list(agents) or None,
+                      mcps=list(mcps) or None, search=search, limit=limit)
     if as_json:
         return _emit_json(rows)
     if not rows:
-        console.print("[yellow]No tool data found. Run 'spooling sync' first"
+        console.print("[yellow]No matching tool data found. Run 'spooling sync' first"
                       + (" (agent filters need traces that contain agent spans)." if agents else ".") + "[/yellow]")
         return
-    table = Table(title="Tools" + (f" called by {', '.join(agents)}" if agents else ""), show_lines=False)
+    title = "Tools"
+    if agents:
+        title += f" called by {', '.join(agents)}"
+    if mcps:
+        title += f" from MCP {', '.join(mcps)}"
+    table = Table(title=title, show_lines=False)
     table.add_column("Tool", style="cyan")
     table.add_column("Uses", justify="right")
     table.add_column("Traces", justify="right")
@@ -1438,27 +1465,130 @@ def tools_cmd(agents, cloud_mode, days, project, provider, limit, as_json):
     table.add_column("Avg time", justify="right", style="dim")
     for r in rows:
         table.add_row(r["name"], _fmt_num(r["uses"]), _fmt_num(r["traces"]),
-                      f"[red]{r['errors']}[/red]" if r["errors"] else "0", _fmt_ms(r["avg_ms"]))
+                      _error_cell(r["errors"]), _fmt_ms(r["avg_ms"]))
     console.print(table)
+
+
+@cli.command("mcps")
+@click.argument("server", required=False)
+@click.option("--search", "-s", default=None, help="Only servers/tools whose name contains this text")
+@click.option("--cloud", "cloud_mode", is_flag=True, help="Use the cloud workspace instead of local data")
+@_filter_opts
+def mcps_cmd(server, search, cloud_mode, days, project, provider, limit, as_json):
+    """Show which MCP servers were used, and which of their tools.
+
+    With no argument, one row per MCP server. Pass a server name (or part of
+    it) to list that server's tools instead.
+
+    \b
+    spooling mcps                       every MCP server used: tools, calls, traces, errors
+    spooling mcps spool                 the tools of servers matching "spool"
+    spooling mcps -s search             servers/tools with "search" in the name
+    spooling mcps --days 7 --json
+    spooling mcps --cloud               workspace-wide, from Spooling Cloud
+    """
+    if cloud_mode:
+        _reject_cloud_filters(days=days, project=project, provider=provider)
+        from spooling.insights import group_mcp_tools
+        rows = _cloud_tool_rows(100, search, [server] if server else None)
+        mcp_rows = [r for r in rows if r["tool_name"].lower().startswith("mcp__")]
+        if server:
+            mcp_rows = mcp_rows[:limit]
+            if as_json:
+                return _emit_json(mcp_rows)
+            table = Table(title=f"MCP tools matching '{server}' (cloud)", show_lines=False)
+            table.add_column("Tool", style="cyan")
+            table.add_column("Uses", justify="right")
+            table.add_column("Sessions", justify="right")
+            table.add_column("Errors", justify="right")
+            for r in mcp_rows:
+                table.add_row(r["tool_name"], _fmt_num(r["uses"]), _fmt_num(r["sessions"]), _error_cell(r["errors"]))
+            console.print(table if mcp_rows else "[yellow]No matching MCP tools in the cloud workspace.[/yellow]")
+            return
+        grouped = group_mcp_tools(mcp_rows)[:limit]
+        if as_json:
+            return _emit_json(grouped)
+        table = Table(title="MCP servers (cloud)", show_lines=False)
+        table.add_column("MCP server", style="cyan")
+        table.add_column("Tools", justify="right")
+        table.add_column("Calls", justify="right")
+        table.add_column("Errors", justify="right")
+        for g in grouped:
+            table.add_row(g["name"], _fmt_num(g["tools"]), _fmt_num(g["calls"]), _error_cell(g["errors"]))
+        console.print(table if grouped else "[yellow]No MCP tool calls in the cloud workspace.[/yellow]")
+        console.print("[dim]Based on the 100 most-used tools in the workspace.[/dim]")
+        return
+
+    from spooling.insights import mcp_stats, tool_stats
+    if server:
+        rows = tool_stats(days=days, project=project, provider=provider, mcps=[server],
+                          search=search, limit=limit)
+        if as_json:
+            return _emit_json(rows)
+        if not rows:
+            console.print(f"[yellow]No MCP tools found for a server matching '{server}'. "
+                          "Run 'spooling mcps' to see the servers.[/yellow]")
+            return
+        table = Table(title=f"MCP tools matching '{server}'", show_lines=False)
+        table.add_column("Tool", style="cyan")
+        table.add_column("Server", style="dim")
+        table.add_column("Uses", justify="right")
+        table.add_column("Traces", justify="right")
+        table.add_column("Errors", justify="right")
+        table.add_column("Avg time", justify="right", style="dim")
+        for r in rows:
+            table.add_row(r["name"], r["mcp_server"] or "", _fmt_num(r["uses"]), _fmt_num(r["traces"]),
+                          _error_cell(r["errors"]), _fmt_ms(r["avg_ms"]))
+        console.print(table)
+        return
+
+    rows = mcp_stats(days=days, project=project, provider=provider, search=search, limit=limit)
+    if as_json:
+        return _emit_json(rows)
+    if not rows:
+        console.print(
+            "[yellow]No MCP tool calls found.[/yellow]\n"
+            "[dim]MCP tools are recorded as mcp__<server>__<tool>. Run 'spooling sync' after using one, "
+            "or try 'spooling mcps --cloud'.[/dim]"
+        )
+        return
+    table = Table(title="MCP servers", show_lines=False)
+    table.add_column("MCP server", style="cyan")
+    table.add_column("Tools", justify="right")
+    table.add_column("Calls", justify="right")
+    table.add_column("Traces", justify="right")
+    table.add_column("Errors", justify="right")
+    table.add_column("Avg time", justify="right", style="dim")
+    for r in rows:
+        table.add_row(r["name"], _fmt_num(r["tools"]), _fmt_num(r["calls"]), _fmt_num(r["traces"]),
+                      _error_cell(r["errors"]), _fmt_ms(r["avg_ms"]))
+    console.print(table)
+    console.print("[dim]spooling mcps <server> lists a server's tools.[/dim]")
 
 
 @cli.command("agents")
 @click.option("--tool", "tools", multiple=True, help="Only agents that called this tool (repeatable)")
+@click.option("--mcp", "mcps", multiple=True, help="Only agents that called a tool of an MCP server matching this (repeatable)")
+@click.option("--search", "-s", default=None, help="Only agents whose name contains this text")
 @click.option("--cloud", "cloud_mode", is_flag=True, help="Use the cloud workspace instead of local data")
 @_filter_opts
-def agents_cmd(tools, cloud_mode, days, project, provider, limit, as_json):
+def agents_cmd(tools, mcps, search, cloud_mode, days, project, provider, limit, as_json):
     """Show which agents (subagent types) ran, how often, and what they cost.
 
     \b
     spooling agents                     agents across all traces
+    spooling agents -s expl             agents whose name contains "expl"
     spooling agents --tool Bash         agents whose runs called Bash
-    spooling agents --days 30 --json
+    spooling agents --mcp github        agents whose runs called a GitHub MCP tool
     spooling agents --cloud             workspace-wide, from Spooling Cloud
     """
     if cloud_mode:
-        _reject_cloud_filters(tool=tools, days=days, project=project, provider=provider)
+        _reject_cloud_filters(tool=tools, mcp=mcps, days=days, project=project, provider=provider)
         from spooling.cloud import cloud_agents
-        rows = cloud_agents()[:limit]
+        rows = cloud_agents()
+        if search:
+            rows = [r for r in rows if search.lower() in r["agent_type"].lower()]
+        rows = rows[:limit]
         if as_json:
             return _emit_json(rows)
         table = Table(title="Agents (cloud)", show_lines=False)
@@ -1466,22 +1596,28 @@ def agents_cmd(tools, cloud_mode, days, project, provider, limit, as_json):
         table.add_column("Runs", justify="right")
         for r in rows:
             table.add_row(r["agent_type"], _fmt_num(r["uses"]))
-        console.print(table if rows else "[yellow]No agent data in the cloud workspace yet.[/yellow]")
+        console.print(table if rows else "[yellow]No matching agents in the cloud workspace.[/yellow]")
         return
 
     from spooling.insights import agent_stats
-    rows = agent_stats(days=days, project=project, provider=provider, tools=list(tools) or None, limit=limit)
+    rows = agent_stats(days=days, project=project, provider=provider, tools=list(tools) or None,
+                       mcps=list(mcps) or None, search=search, limit=limit)
     if as_json:
         return _emit_json(rows)
     if not rows:
         console.print(
-            "[yellow]No agent spans found locally.[/yellow]\n"
+            "[yellow]No matching agent spans found locally.[/yellow]\n"
             "[dim]Agent runs are recorded for providers that expose subagents (currently Claude Code, via its "
             "Agent/Task tool). Run 'spooling sync' after using one, or try 'spooling agents --cloud'.\n"
             "If you use Claude Code and still see this, run 'spooling sync --reparse -p claude-code'.[/dim]"
         )
         return
-    table = Table(title="Agents" + (f" that called {', '.join(tools)}" if tools else ""), show_lines=False)
+    title = "Agents"
+    if tools:
+        title += f" that called {', '.join(tools)}"
+    if mcps:
+        title += f" that used MCP {', '.join(mcps)}"
+    table = Table(title=title, show_lines=False)
     table.add_column("Agent", style="cyan")
     table.add_column("Runs", justify="right")
     table.add_column("Traces", justify="right")
@@ -1498,22 +1634,26 @@ def agents_cmd(tools, cloud_mode, days, project, provider, limit, as_json):
 @click.argument("query", required=False)
 @click.option("--agent", "agents", multiple=True, help="Only traces that ran this agent (repeatable)")
 @click.option("--tool", "tools", multiple=True, help="Only traces that used this tool (repeatable)")
+@click.option("--mcp", "mcps", multiple=True, help="Only traces that used an MCP server matching this (repeatable)")
 @click.option("--session", default=None, help="Session id (or unique prefix)")
 @_filter_opts
-def traces_cmd(query, agents, tools, session, days, project, provider, limit, as_json):
-    """List traces, optionally filtered by agent, tool, or free text.
+def traces_cmd(query, agents, tools, mcps, session, days, project, provider, limit, as_json):
+    """List traces, optionally filtered by agent, tool, MCP server, or free text.
 
-    QUERY matches title, project, session id, trace id or an agent name.
+    QUERY matches title, project, session id, trace id, an agent name or an MCP
+    server name. --agent and --tool match the exact name, ignoring case.
 
     \b
     spooling traces                           latest traces
     spooling traces ses_10dd                  find by session id
     spooling traces --agent explore           traces that ran the explore agent
+    spooling traces --mcp spool               traces that used an MCP server matching "spool"
     spooling traces --tool Bash --days 7      traces that used Bash this week
     """
     from spooling.insights import list_traces
     rows = list_traces(query=query, agents=list(agents) or None, tools=list(tools) or None,
-                       session=session, days=days, project=project, provider=provider, limit=limit)
+                       mcps=list(mcps) or None, session=session, days=days, project=project,
+                       provider=provider, limit=limit)
     if as_json:
         return _emit_json(rows)
     if not rows:
@@ -1524,17 +1664,21 @@ def traces_cmd(query, agents, tools, session, days, project, provider, limit, as
     table.add_column("Title", style="cyan", max_width=22, overflow="ellipsis", no_wrap=True)
     table.add_column("Session", style="dim", no_wrap=True)
     table.add_column("Agents", max_width=12, overflow="ellipsis", no_wrap=True)
+    table.add_column("MCP", max_width=12, overflow="ellipsis", no_wrap=True)
     table.add_column("Spans", justify="right", no_wrap=True)
     table.add_column("Tools", justify="right", no_wrap=True)
     table.add_column("Cost", justify="right", no_wrap=True)
+
+    def short(names: list[str]) -> str:
+        return ", ".join(names[:1]) + (f" +{len(names) - 1}" if len(names) > 1 else "") if names else "-"
+
     for r in rows:
-        ag = r["agents"]
-        ag_txt = ", ".join(ag[:1]) + (f" +{len(ag) - 1}" if len(ag) > 1 else "") if ag else "-"
         table.add_row(
             str(r["started_at"] or "")[5:10],
             r["title"] or "(untitled)",
             (r["session_id"] or "")[:10],
-            ag_txt,
+            short(r["agents"]),
+            short(r["mcps"]),
             _fmt_num(r["span_count"]),
             _fmt_num(r["tool_count"]),
             f"${float(r['total_cost_usd'] or 0):.2f}",

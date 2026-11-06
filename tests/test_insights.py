@@ -163,7 +163,7 @@ class TestCli:
 
     def test_agents_empty_explains_why(self, conn):
         r = self.run("agents")
-        assert r.exit_code == 0 and "No agent spans" in r.output
+        assert r.exit_code == 0 and "agent spans found locally" in r.output
 
     def test_traces_filters(self, seeded):
         data = json.loads(self.run("traces", "--agent", "build", "--json").output)
@@ -216,3 +216,192 @@ class TestCloudErrors:
         monkeypatch.setattr(cloud.httpx, "get", reject)
         r = self.run("tools", "--cloud")
         assert r.exit_code == 1 and "401" in r.output
+
+
+# ---------------------------------------------------------------------------
+# MCP servers, --search, case-insensitive names
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def seeded_mcp(seeded, conn):
+    """seeded + MCP calls: spool (root + under explore), github (under build), a Drive server with underscores."""
+    add_span(conn, "A-m1", "tA", "tool", parent="A-root", tool="mcp__spool__search_sessions", ms=200)
+    add_span(conn, "A-m2", "tA", "tool", parent="A-ex", tool="mcp__spool__get_session", err=1, ms=400)
+    add_span(conn, "A-m3", "tA", "tool", parent="A-ex", tool="mcp__spool__search_sessions", ms=300)
+    add_span(conn, "B-m1", "tB", "tool", parent="B-bd", tool="mcp__github__create_issue", ms=500)
+    add_span(conn, "C-m1", "tC", "tool", parent="C-root", tool="mcp__claude_ai_Google_Drive__search_files")
+    conn.commit()
+
+
+class TestMcpHelpers:
+    def test_server_of(self):
+        assert insights.mcp_server_of("mcp__spool__search_sessions") == "spool"
+        assert insights.mcp_server_of("mcp__claude_ai_Google_Drive__search") == "claude_ai_Google_Drive"
+        assert insights.mcp_server_of("MCP__Spool__x") == "Spool"
+        assert insights.mcp_server_of("Bash") is None
+        assert insights.mcp_server_of(None) is None
+
+    def test_group_mcp_tools(self):
+        rows = [{"tool_name": "mcp__spool__a", "uses": 5, "errors": 1},
+                {"tool_name": "mcp__spool__b", "uses": 2, "errors": 0},
+                {"tool_name": "mcp__gh__c", "uses": 9, "errors": 0},
+                {"tool_name": "Bash", "uses": 100, "errors": 3}]
+        g = insights.group_mcp_tools(rows)
+        assert [(x["name"], x["tools"], x["calls"], x["errors"]) for x in g] == [
+            ("gh", 1, 9, 0), ("spool", 2, 7, 1)]
+
+
+class TestMcpStats:
+    def test_groups_by_server(self, seeded_mcp):
+        m = by_name(insights.mcp_stats())
+        assert set(m) == {"spool", "github", "claude_ai_Google_Drive"}
+        assert m["spool"]["tools"] == 2 and m["spool"]["calls"] == 3
+        assert m["spool"]["traces"] == 1 and m["spool"]["errors"] == 1
+        assert m["spool"]["avg_ms"] == pytest.approx(300)
+        assert [r["name"] for r in insights.mcp_stats()][0] == "spool"      # most calls first
+
+    def test_empty_without_mcp_calls(self, seeded):
+        assert insights.mcp_stats() == []
+
+    def test_search_matches_server_or_tool(self, seeded_mcp):
+        assert set(by_name(insights.mcp_stats(search="GITHUB"))) == {"github"}
+        assert set(by_name(insights.mcp_stats(search="search_"))) == {"spool", "claude_ai_Google_Drive"}
+
+    def test_filters(self, seeded_mcp):
+        assert set(by_name(insights.mcp_stats(days=7))) == {"spool", "claude_ai_Google_Drive"}  # github is on old trace B
+        assert set(by_name(insights.mcp_stats(provider="opencode"))) == {"github"}
+
+
+class TestToolFiltersMcpAndSearch:
+    def test_mcp_filter_is_server_substring_case_insensitive(self, seeded_mcp):
+        assert set(by_name(insights.tool_stats(mcps=["SPOOL"]))) == {
+            "mcp__spool__search_sessions", "mcp__spool__get_session"}
+        assert set(by_name(insights.tool_stats(mcps=["spool", "github"]))) == {
+            "mcp__spool__search_sessions", "mcp__spool__get_session", "mcp__github__create_issue"}
+
+    def test_underscore_and_percent_in_filter_are_literal(self, seeded_mcp):
+        assert set(by_name(insights.tool_stats(mcps=["ai_Google"]))) == {"mcp__claude_ai_Google_Drive__search_files"}
+        assert insights.tool_stats(mcps=["claude%"]) == []        # % is not a wildcard
+        assert insights.tool_stats(mcps=["ai_Go_gle"]) == []      # _ is not a wildcard
+
+    def test_rows_report_their_mcp_server(self, seeded_mcp):
+        t = by_name(insights.tool_stats())
+        assert t["mcp__github__create_issue"]["mcp_server"] == "github"
+        assert t["Bash"]["mcp_server"] is None
+
+    def test_search_by_name(self, seeded_mcp):
+        assert set(by_name(insights.tool_stats(search="READ"))) == {"Read"}
+        assert set(by_name(insights.tool_stats(search="session"))) == {
+            "mcp__spool__search_sessions", "mcp__spool__get_session"}
+        assert insights.tool_stats(search="r_ad") == []           # _ is literal
+
+    def test_agent_filter_is_case_insensitive_and_combines_with_mcp(self, seeded_mcp):
+        assert set(by_name(insights.tool_stats(agents=["EXPLORE"]))) == {
+            "Read", "Grep", "mcp__spool__get_session", "mcp__spool__search_sessions"}
+        assert set(by_name(insights.tool_stats(agents=["explore"], mcps=["spool"]))) == {
+            "mcp__spool__get_session", "mcp__spool__search_sessions"}
+        assert insights.tool_stats(agents=["build"], mcps=["spool"]) == []
+
+
+class TestAgentFiltersMcpAndSearch:
+    def test_mcp_filter_is_subtree_only(self, seeded_mcp):
+        assert set(by_name(insights.agent_stats(mcps=["spool"]))) == {"explore"}
+        assert set(by_name(insights.agent_stats(mcps=["github"]))) == {"build"}
+        assert insights.agent_stats(mcps=["Google_Drive"]) == []      # that call is outside any agent
+
+    def test_tool_filter_case_insensitive(self, seeded_mcp):
+        assert set(by_name(insights.agent_stats(tools=["grep"]))) == {"explore"}
+
+    def test_tool_and_mcp_must_both_match(self, seeded_mcp):
+        assert set(by_name(insights.agent_stats(tools=["Grep"], mcps=["spool"]))) == {"explore"}
+        assert insights.agent_stats(tools=["Grep"], mcps=["github"]) == []
+
+    def test_search(self, seeded_mcp):
+        assert set(by_name(insights.agent_stats(search="EXPL"))) == {"explore"}
+        assert insights.agent_stats(search="zzz") == []
+
+
+class TestTracesMcp:
+    def test_mcp_filter_and_per_trace_servers(self, seeded_mcp):
+        rows = insights.list_traces(mcps=["spool"])
+        assert [r["id"] for r in rows] == ["tA"]
+        assert rows[0]["mcps"] == ["spool"] and rows[0]["agents"] == ["explore"]
+        all_rows = {r["id"]: r for r in insights.list_traces()}
+        assert all_rows["tB"]["mcps"] == ["github"]
+        assert all_rows["tC"]["mcps"] == ["claude_ai_Google_Drive"]
+
+    def test_free_text_matches_mcp_server_name(self, seeded_mcp):
+        assert [r["id"] for r in insights.list_traces(query="github")] == ["tB"]
+        assert [r["id"] for r in insights.list_traces(query="Google_Drive")] == ["tC"]
+
+    def test_agent_and_tool_names_ignore_case(self, seeded_mcp):
+        assert [r["id"] for r in insights.list_traces(agents=["EXPLORE"])] == ["tA"]
+        assert [r["id"] for r in insights.list_traces(tools=["bash"])] == ["tA", "tB"]
+
+    def test_all_filter_kinds_must_match(self, seeded_mcp):
+        assert [r["id"] for r in insights.list_traces(agents=["build"], mcps=["github"])] == ["tB"]
+        assert insights.list_traces(agents=["build"], mcps=["spool"]) == []
+        assert [r["id"] for r in insights.list_traces(tools=["Bash"], mcps=["spool"])] == ["tA"]
+
+
+class TestMcpCli:
+    def run(self, *args):
+        return CliRunner().invoke(cli, list(args))
+
+    def test_mcps_server_table(self, seeded_mcp):
+        r = self.run("mcps")
+        assert r.exit_code == 0 and "spool" in r.output and "github" in r.output
+        data = json.loads(self.run("mcps", "--json").output)
+        assert [d["name"] for d in data][0] == "spool" and data[0]["calls"] == 3
+
+    def test_mcps_server_argument_lists_tools(self, seeded_mcp):
+        data = json.loads(self.run("mcps", "spool", "--json").output)
+        assert {d["name"] for d in data} == {"mcp__spool__search_sessions", "mcp__spool__get_session"}
+        assert "No MCP tools found" in self.run("mcps", "nope").output
+
+    def test_mcps_empty_explains(self, seeded):
+        r = self.run("mcps")
+        assert r.exit_code == 0 and "No MCP tool calls found" in r.output
+
+    def test_tools_mcp_and_search_options(self, seeded_mcp):
+        data = json.loads(self.run("tools", "--mcp", "github", "--json").output)
+        assert [d["name"] for d in data] == ["mcp__github__create_issue"]
+        data = json.loads(self.run("tools", "-s", "get_sess", "--json").output)
+        assert [d["name"] for d in data] == ["mcp__spool__get_session"]
+
+    def test_agents_mcp_and_search_options(self, seeded_mcp):
+        assert [d["name"] for d in json.loads(self.run("agents", "--mcp", "github", "--json").output)] == ["build"]
+        assert [d["name"] for d in json.loads(self.run("agents", "-s", "EXP", "--json").output)] == ["explore"]
+
+    def test_traces_mcp_option_and_mcp_column(self, seeded_mcp):
+        data = json.loads(self.run("traces", "--mcp", "github", "--json").output)
+        assert [d["id"] for d in data] == ["tB"] and data[0]["mcps"] == ["github"]
+        assert "MCP" in self.run("traces").output
+
+    def test_cloud_tools_search_and_mcp_are_client_side(self, seeded, monkeypatch):
+        from spooling import cloud
+        rows = [{"tool_name": "Bash", "uses": 9, "sessions": 3, "errors": 0},
+                {"tool_name": "mcp__spool__search_sessions", "uses": 7, "sessions": 2, "errors": 1},
+                {"tool_name": "mcp__github__create_issue", "uses": 4, "sessions": 1, "errors": 0}]
+        monkeypatch.setattr(cloud, "cloud_tools", lambda limit=20: rows)
+        assert [d["tool_name"] for d in json.loads(self.run("tools", "--cloud", "--mcp", "git", "--json").output)] == [
+            "mcp__github__create_issue"]
+        assert [d["tool_name"] for d in json.loads(self.run("tools", "--cloud", "-s", "BASH", "--json").output)] == ["Bash"]
+
+    def test_cloud_mcps_groups_by_server(self, seeded, monkeypatch):
+        from spooling import cloud
+        monkeypatch.setattr(cloud, "cloud_tools", lambda limit=20: [
+            {"tool_name": "Bash", "uses": 99, "sessions": 9, "errors": 0},
+            {"tool_name": "mcp__spool__a", "uses": 5, "sessions": 2, "errors": 1},
+            {"tool_name": "mcp__spool__b", "uses": 2, "sessions": 1, "errors": 0},
+            {"tool_name": "mcp__gh__c", "uses": 9, "sessions": 1, "errors": 0}])
+        data = json.loads(self.run("mcps", "--cloud", "--json").output)
+        assert [(d["name"], d["tools"], d["calls"]) for d in data] == [("gh", 1, 9), ("spool", 2, 7)]
+        data = json.loads(self.run("mcps", "spool", "--cloud", "--json").output)
+        assert [d["tool_name"] for d in data] == ["mcp__spool__a", "mcp__spool__b"]
+
+    def test_cloud_agents_search(self, seeded, monkeypatch):
+        from spooling import cloud
+        monkeypatch.setattr(cloud, "cloud_agents", lambda: [
+            {"agent_type": "explore", "uses": 7}, {"agent_type": "build", "uses": 3}])
+        assert [d["agent_type"] for d in json.loads(self.run("agents", "--cloud", "-s", "BUI", "--json").output)] == ["build"]

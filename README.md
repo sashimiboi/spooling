@@ -119,28 +119,38 @@ spooling stats --week      # Weekly breakdown
 spooling stats --days 30   # Last 30 days
 ```
 
-### `spooling tools`, `spooling agents`, `spooling traces`
+### `spooling tools`, `spooling agents`, `spooling mcps`, `spooling traces`
 
-See which tools and agents your sessions use. These read the spans stored by `spooling sync`, and use the same agent/tool names as the web app (an agent is its subagent type, falling back to its span name).
+See which tools, MCP servers and agents your sessions use. These read the spans stored by `spooling sync`, and use the same names as the web app (an agent is its subagent type, falling back to its span name; an MCP tool is named `mcp__<server>__<tool>`).
 
 ```bash
 spooling tools                       # Top tools: uses, traces, errors, avg time
+spooling tools -s read               # Tools whose name contains "read"
 spooling tools --agent explore       # Tools called by the "explore" agent
-spooling tools --days 7 --provider claude-code
+spooling tools --mcp github          # Tools of MCP servers matching "github"
+
+spooling mcps                        # Every MCP server used: tools, calls, traces, errors
+spooling mcps spool                  # The tools of servers matching "spool"
 
 spooling agents                      # Agents: runs, traces, tokens, cost
+spooling agents -s expl              # Agents whose name contains "expl"
 spooling agents --tool Bash          # Agents whose runs called Bash
+spooling agents --mcp github         # Agents whose runs used a GitHub MCP tool
 
-spooling traces                      # Latest traces, with the agents each ran
-spooling traces ses_10dd             # Search title, project, session id, trace id or agent name
-spooling traces --agent explore --tool Bash --days 30
+spooling traces                      # Latest traces, with the agents and MCP servers each used
+spooling traces ses_10dd             # Search title, project, session id, trace id, agent or MCP server name
+spooling traces --agent explore --tool Bash --mcp spool --days 30
 ```
 
-Common options: `--days N`, `--project TEXT`, `--provider/-p NAME`, `--limit/-n N`, and `--json` for scripting. `--agent` and `--tool` can be repeated (matches any).
+Common options: `--days N`, `--project TEXT`, `--provider/-p NAME`, `--limit/-n N`, and `--json` for scripting.
 
-`tools --agent` and `agents --tool` look inside an agent's own runs. `traces --agent/--tool` matches whole traces, like the Traces page.
+Matching rules: `--agent` and `--tool` match the exact name, ignoring case, and can be repeated (matches any). `--mcp` and `--search/-s` match part of the name, ignoring case. When you combine different filters on `traces`, a trace must satisfy all of them.
 
-`spooling tools --cloud` and `spooling agents --cloud` show workspace-wide totals from Spooling Cloud. The cloud endpoints only support `--limit`, so combining `--cloud` with other filters is an error. Agent data is only recorded for providers that expose subagents (currently Claude Code, via its `Agent` tool, previously called `Task`), so `spooling agents` is empty for other providers.
+`tools --agent` and `agents --tool/--mcp` look inside an agent's own runs. `traces --agent/--tool/--mcp` matches whole traces, like the Traces page.
+
+`--cloud` on `tools`, `agents` and `mcps` shows workspace-wide totals from Spooling Cloud. The cloud endpoints only return the 100 most-used tools, so `--search` and `--mcp` filter those client-side, and `--days/--project/--provider/--agent/--tool` can't be combined with `--cloud`.
+
+Agent data is only recorded for providers that expose subagents (currently Claude Code, via its `Agent` tool, previously called `Task`), so `spooling agents` is empty for other providers. MCP calls are recognised by the `mcp__<server>__<tool>` name Claude Code uses; tools from other clients that name MCP tools differently (for example `server_tool`) appear in `spooling tools` but not in `spooling mcps`.
 
 After upgrading, `spooling sync` re-reads your Claude Code sessions once to pick up agents. To force a re-read of any provider's files at any time, run `spooling sync --reparse` (optionally with `-p claude-code`).
 
