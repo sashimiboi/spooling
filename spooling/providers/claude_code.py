@@ -37,6 +37,8 @@ def _claude_config_dirs() -> list[Path]:
 class ClaudeCodeProvider(Provider):
     type_id = "claude-code"
     name = "Claude Code"
+    # 2: subagent calls named "Agent" (not just "Task") now create agent spans.
+    parser_revision = 2
 
     def default_data_path(self) -> Path:
         candidates = [d / "projects" for d in _claude_config_dirs()]

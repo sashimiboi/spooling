@@ -458,8 +458,42 @@ def _sync_remote_provider(conn, provider, prov_info: dict, embed: bool) -> tuple
     return total_sessions, total_messages, total_chunks
 
 
-def sync(embed: bool = True, provider_filter: str | None = None):
-    """Sync sessions from all connected providers to the database."""
+_REVISION_PREFIX = "__parser_revision__:"
+
+
+def _needs_reread(conn, synced: dict, provider_type: str, revision: int, reparse: bool) -> bool:
+    """True if this provider's already-synced files must be re-read this run.
+
+    Either the user asked (``--reparse``), or a parser fix shipped
+    (``provider.parser_revision`` is newer than the one recorded at last sync)
+    and there are previously synced files that were parsed the old way.
+    """
+    if reparse:
+        return True
+    if not revision:
+        return False
+    stored = synced.get(_REVISION_PREFIX + provider_type)
+    if stored is not None and stored >= revision:
+        return False
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM sync_state WHERE provider_id = %s AND file_path NOT LIKE %s",
+        (provider_type, _REVISION_PREFIX + "%"),
+    ).fetchone()
+    return bool(row["n"])
+
+
+def _record_revision(conn, synced: dict, provider_type: str, revision: int) -> None:
+    if revision and synced.get(_REVISION_PREFIX + provider_type) != revision:
+        _mark_synced(conn, _REVISION_PREFIX + provider_type, revision, provider_type)
+        synced[_REVISION_PREFIX + provider_type] = revision
+
+
+def sync(embed: bool = True, provider_filter: str | None = None, reparse: bool = False):
+    """Sync sessions from all connected providers to the database.
+
+    ``reparse`` re-reads files even if they look unchanged (also done
+    automatically, once, when a provider's parser improves).
+    """
     conn = get_connection()
     connected = _get_connected_providers(conn)
 
@@ -533,20 +567,31 @@ def sync(embed: bool = True, provider_filter: str | None = None):
         if not files:
             continue
 
+        revision = getattr(provider, "parser_revision", 0)
+        reread = _needs_reread(conn, synced, prov_info["type"], revision, reparse)
+        # When re-reading, pretend nothing was synced so every file is parsed again.
+        prov_synced = {} if reread else synced
+
         # Filter to new or changed files. Incremental providers (many sessions
         # per file) are always scanned; they skip unchanged sessions themselves.
         to_process = []
         for f in files:
             size = f.stat().st_size
-            if provider.incremental or str(f) not in synced or synced[str(f)] != size:
+            if provider.incremental or str(f) not in prov_synced or prov_synced[str(f)] != size:
                 to_process.append(f)
 
         if not to_process:
+            _record_revision(conn, synced, prov_info["type"], revision)
+            conn.commit()
             continue
 
         console.print(
             f"[bold]{provider.name}:[/bold] Found {len(to_process)} new/updated session files."
         )
+        if reread and not reparse:
+            console.print(
+                f"  [dim]Re-reading {provider.name} sessions once to pick up improved parsing.[/dim]"
+            )
 
         total_messages = 0
         total_chunks = 0
@@ -570,7 +615,7 @@ def sync(embed: bool = True, provider_filter: str | None = None):
                 batch_sessions: list[tuple] = []  # (file, [sessions])
 
                 for f in batch_files:
-                    sessions = parse_file(provider, f, synced)
+                    sessions = parse_file(provider, f, prov_synced)
                     for session in sessions:
                         _store_session(conn, session)
                         if session.trace is not None:
@@ -600,6 +645,8 @@ def sync(embed: bool = True, provider_filter: str | None = None):
                 for f, _ in batch_sessions:
                     _mark_synced(conn, str(f), f.stat().st_size, prov_info["type"])
                 conn.commit()
+
+        _record_revision(conn, synced, prov_info["type"], revision)
 
         # Update provider stats
         conn.execute(

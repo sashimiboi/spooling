@@ -30,6 +30,12 @@ _SYSTEM_PREFIXES = re.compile(
 _XML_TAG_STRIP = re.compile(r"<[^>]+>[^<]*</[^>]+>\s*")
 
 
+# Claude Code's subagent-launching tool. It was called "Task" and is now called
+# "Agent"; both carry ``subagent_type`` + ``prompt``/``description`` and must
+# produce an agent span.
+AGENT_TOOL_NAMES = ("Task", "Agent")
+
+
 @dataclass
 class ToolCallDetail:
     tool_use_id: str
@@ -569,7 +575,7 @@ def _build_trace(
                 tool_id = tu.get("id") or f"tu-{uid}-{tool_name}"
                 tool_input = tu.get("input") if isinstance(tu.get("input"), dict) else None
 
-                if tool_name == "Task":
+                if tool_name in AGENT_TOOL_NAMES:
                     # Agent span — child of whatever parent_span is.
                     sub_type = (tool_input or {}).get("subagent_type") or "generic"
                     prompt = (tool_input or {}).get("prompt") or (tool_input or {}).get("description")

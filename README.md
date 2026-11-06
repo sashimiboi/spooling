@@ -140,7 +140,11 @@ Common options: `--days N`, `--project TEXT`, `--provider/-p NAME`, `--limit/-n 
 
 `tools --agent` and `agents --tool` look inside an agent's own runs. `traces --agent/--tool` matches whole traces, like the Traces page.
 
-`spooling tools --cloud` and `spooling agents --cloud` show workspace-wide totals from Spooling Cloud. The cloud endpoints only support `--limit`, so combining `--cloud` with other filters is an error. Agent data is only recorded for providers that expose subagents (for example Claude Code's `Task` tool), so `spooling agents` can be empty for other providers.
+`spooling tools --cloud` and `spooling agents --cloud` show workspace-wide totals from Spooling Cloud. The cloud endpoints only support `--limit`, so combining `--cloud` with other filters is an error. Agent data is only recorded for providers that expose subagents (currently Claude Code, via its `Agent` tool, previously called `Task`), so `spooling agents` is empty for other providers.
+
+After upgrading, `spooling sync` re-reads your Claude Code sessions once to pick up agents. To force a re-read of any provider's files at any time, run `spooling sync --reparse` (optionally with `-p claude-code`).
+
+Agent runs show duration and the prompt that started them. Their own tokens, cost and tool calls are not attributed yet, because Claude Code writes subagent activity to separate transcript files that Spooling does not read yet.
 
 ### `spooling search <query>`
 
