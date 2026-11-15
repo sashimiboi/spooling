@@ -354,16 +354,19 @@ the CLI ships with a `spooling cloud` subcommand.
 
 ### One-time setup
 
-1. Mint an API key in the GUI at `app.spooling.ai/settings/api-keys`
-   (looks like `sk_live_...`).
-2. Save it locally:
+1. Sign in from the terminal:
 
    ```bash
-   spooling cloud login --key sk_live_...
+   spooling login
    ```
 
-   The key is stored at `~/.config/spooling/cloud.json` with `0600` perms.
-   You can override the API base with `--api-url` or the
+   This opens your browser with a short code (for example `BCDF-GHJK`). Check the code, pick the workspace the
+   sessions should go to, and click Approve. The API key is generated on your machine and only its hash is sent to
+   Spooling, so there is nothing to copy and paste. It is stored at `~/.config/spooling/cloud.json` with `0600`
+   perms. Use `--no-browser` to just print the link (SSH sessions, containers).
+
+   Prefer to manage keys yourself? Mint one at `app.spooling.ai/settings` and run
+   `spooling cloud login --key sk_live_...`. You can override the API base with `--api-url` or the
    `SPOOLING_CLOUD_URL` env var (default: `https://api.spooling.ai`).
 
 ### Push once

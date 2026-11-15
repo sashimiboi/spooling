@@ -107,6 +107,16 @@ def watch():
     do_watch()
 
 
+@cli.command("login")
+@click.option("--no-browser", is_flag=True, help="Print the approval link instead of opening it")
+@click.option("--api-url", default=None, help="Override the Spooling Cloud API base")
+@click.pass_context
+def login(ctx, no_browser, api_url):
+    """Sign in to Spooling Cloud through your browser (shortcut for `spooling cloud login`)."""
+    from spooling.cloud import cloud_login
+    ctx.invoke(cloud_login, key=None, api_url=api_url, no_browser=no_browser)
+
+
 @cli.command()
 @click.argument("query")
 @click.option("-n", "--limit", default=10, help="Number of results")

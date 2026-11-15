@@ -66,7 +66,7 @@ def _auth_headers() -> dict:
     cfg = _load_config()
     key = cfg.get("api_key") or os.environ.get("SPOOLING_CLOUD_API_KEY")
     if not key:
-        raise click.ClickException("Not logged in. Run `spooling cloud login --key sk_...` first.")
+        raise click.ClickException("Not logged in. Run `spooling login` first.")
     return {"Authorization": f"Bearer {key}"}
 
 
@@ -218,14 +218,22 @@ def cloud():
 
 
 @cloud.command("login")
-@click.option("--key", required=True, help="API key minted at app.spooling.ai/settings/api-keys")
+@click.option("--key", default=None, help="Use an API key you already have (skips the browser)")
 @click.option("--api-url", default=None, help=f"Override API base (default {DEFAULT_API})")
-def cloud_login(key: str, api_url: str | None):
-    """Store a Spooling Cloud API key in ~/.config/spooling/cloud.json."""
+@click.option("--no-browser", is_flag=True, help="Print the approval link instead of opening it")
+def cloud_login(key: str | None, api_url: str | None, no_browser: bool):
+    """Sign in to Spooling Cloud (opens your browser), or store a key you already have."""
     cfg = _load_config()
-    cfg["api_key"] = key.strip()
     if api_url:
         cfg["api_url"] = api_url.rstrip("/")
+    if key:
+        cfg["api_key"] = key.strip()
+    else:
+        from spooling.device_login import run_device_login
+        base = cfg.get("api_url") or os.environ.get("SPOOLING_CLOUD_URL") or DEFAULT_API
+        cfg["api_key"], ws = run_device_login(base, open_browser=not no_browser)
+        if ws.get("name"):
+            console.print(f"[green]Approved.[/green] Sessions will be pushed to [bold]{ws['name']}[/bold].")
     _save_config(cfg)
 
     base = cfg.get("api_url") or DEFAULT_API
@@ -246,7 +254,7 @@ def cloud_status():
     """Show current login + cloud stats."""
     cfg = _load_config()
     if not cfg.get("api_key"):
-        console.print("[yellow]Not logged in.[/yellow] Run `spooling cloud login --key sk_...`.")
+        console.print("[yellow]Not logged in.[/yellow] Run `spooling login`.")
         return
     base = _api_base()
     try:
