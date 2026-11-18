@@ -204,6 +204,8 @@ Some providers already supply a summary (Claude Code writes `summary` records). 
 | `openai` (default) | Any OpenAI-compatible endpoint: local [Ollama](https://ollama.com), OpenAI, OpenRouter, vLLM, LiteLLM | none for local; `SPOOLING_SUMMARY_API_KEY` for hosted |
 | `anthropic` | The Anthropic API | `ANTHROPIC_API_KEY` |
 | `bedrock` | AWS Bedrock (Converse API). Uses `boto3`, which Spooling already installs | `AWS_BEARER_TOKEN_BEDROCK` (Bedrock API key; needs a recent `boto3`) or any normal AWS credentials, plus `AWS_REGION` |
+| `claude-code` | Reuse your Claude Code login (runs `claude -p`), here or on another machine with `--ssh` | whatever Claude Code is signed in with |
+| `opencode` | Reuse opencode's providers (runs `opencode run`), here or over `--ssh` | whatever opencode is configured with |
 
 The default is a local Ollama daemon, so nothing leaves your machine. Any other backend sends redacted transcripts to a third party, so Spooling asks for confirmation first (skip with `--yes`).
 
@@ -216,16 +218,30 @@ spooling summarize --base-url https://api.openai.com/v1 --model gpt-4o-mini
 spooling summarize --backend anthropic        # defaults to claude-haiku-4-5
 spooling summarize --backend bedrock --region us-east-2 \
   --model us.anthropic.claude-haiku-4-5-20251001-v1:0
+
+spooling summarize --backend claude-code                  # uses your Claude Code login
+spooling summarize --backend claude-code --ssh my-other-mac
+spooling summarize --backend opencode --model amazon-bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0
 ```
 
 - `-p, --project`, `--provider`, `-d, --days`, `-n, --limit` - choose which sessions
 - `--min-messages` - skip very short sessions (default 4)
-- `--backend` - `openai`, `anthropic` or `bedrock` (or set `SPOOLING_SUMMARY_BACKEND`)
+- `--backend` - `openai`, `anthropic`, `bedrock`, `claude-code` or `opencode` (or set `SPOOLING_SUMMARY_BACKEND`)
 - `--model` - model name or id (or set `SPOOLING_SUMMARY_MODEL`). Defaults to `qwen2.5:7b` for `openai` and `claude-haiku-4-5` for `anthropic`; `bedrock` requires one, because Bedrock ids differ by region and account (use an inference profile id such as `us.anthropic.claude-haiku-4-5-20251001-v1:0`)
 - `--base-url` - endpoint for the `openai` backend (or `SPOOLING_SUMMARY_BASE_URL`; default `http://localhost:11434/v1`)
 - `--region` - AWS region for `bedrock` (default `AWS_REGION`)
+- `--ssh HOST` - run the `claude-code` or `opencode` backend on another machine over SSH (for example a Mac where Claude Code is signed in). Needs key-based SSH login; the redacted transcript is piped over the connection
+- `--cli-cmd` - the command to run if it isn't on `PATH`, such as `~/.local/bin/claude`. With `--ssh`, this is the path on the remote machine
 - `--force` - regenerate even if a summary exists
 - `-y, --yes` - don't ask before sending text to a non-local endpoint
+
+#### Using Claude Code or opencode
+
+The `claude-code` and `opencode` backends run the agent's headless mode and send the prompt on stdin, so there is no API key to set up: they use whatever login the agent already has. Both send the redacted transcript to that agent's provider, so Spooling asks for confirmation first.
+
+- Leave `--model` off to use the agent's default model. For opencode, the model is `provider/model`, and your configured default may be an old model id, so pass one explicitly if you see an error.
+- With `--ssh`, the agent runs from `/tmp` on the remote machine, so it doesn't pick up a project's rules. SSH runs non-interactively and often skips your shell profile, so if you get "not found", use `--cli-cmd` with the full path.
+- `claude -p` records each run as a session in that machine's Claude Code history. They are tagged with a `spooling-summary:` prefix, and `spooling summarize` skips them. The opencode backend deletes its run's session automatically.
 
 The run stops early on errors that would repeat for every session (bad credentials, an unreachable server, an unknown model). A summary Spooling generated is refreshed on the next run once the session has grown; `session show` tells you when that is the case.
 

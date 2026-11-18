@@ -26,7 +26,12 @@ Configuration (flags on the CLI override these):
 from __future__ import annotations
 
 import functools
+import json
 import os
+import re
+import shlex
+import subprocess
+import tempfile
 from urllib.parse import urlparse
 
 import httpx
@@ -127,10 +132,18 @@ def clean_summary(text: str) -> str:
     return text
 
 
-BACKENDS = ("openai", "anthropic", "bedrock")
+BACKENDS = ("openai", "anthropic", "bedrock", "claude-code", "opencode")
 DEFAULT_BACKEND = os.environ.get("SPOOLING_SUMMARY_BACKEND", "openai")
 DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5"
 MAX_OUTPUT_TOKENS = 300
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+class FatalBackendError(RuntimeError):
+    """A failure that will repeat for every session (missing model, command not
+    found, SSH unreachable), so the run should stop instead of retrying."""
 
 
 def is_local_backend(backend: str, base_url: str) -> bool:
@@ -146,6 +159,9 @@ def resolve_model(backend: str, model: str | None) -> str:
         return DEFAULT_MODEL
     if backend == "anthropic":
         return os.environ.get("SPOOLING_SUMMARY_MODEL") or DEFAULT_ANTHROPIC_MODEL
+    if backend in CLI_BACKENDS:
+        # Empty means "whatever model the agent is configured to use".
+        return os.environ.get("SPOOLING_SUMMARY_MODEL") or ""
     # Bedrock ids are region/account specific (inference profiles like
     # "us.anthropic....-v1:0"), so there is no default that is safe everywhere.
     env = os.environ.get("SPOOLING_SUMMARY_MODEL")
@@ -181,6 +197,11 @@ def _complete_openai(transcript, *, model, base_url, api_key, timeout, client) -
     client = client or httpx.Client(timeout=timeout)
     try:
         resp = client.post(url, json=payload, headers=headers)
+        if resp.status_code == 404:
+            raise FatalBackendError(
+                f"404 from {url}: model {model!r} not found, or this is not an OpenAI-compatible "
+                f"endpoint. For Ollama, run: ollama pull {model}"
+            )
         resp.raise_for_status()
         data = resp.json()
     finally:
@@ -191,6 +212,119 @@ def _complete_openai(transcript, *, model, base_url, api_key, timeout, client) -
         return data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as e:
         raise ValueError(f"unexpected response from {url}: {str(data)[:200]}") from e
+
+
+# Backends that shell out to a coding agent's headless mode. The prompt goes in
+# on stdin and the answer comes back on stdout, so this reuses whatever login
+# the agent already has (a Claude Code subscription, opencode's providers).
+#   name -> (executable, fixed args, flag that selects a model)
+CLI_BACKENDS = {
+    "claude-code": ("claude", ["-p"], "--model"),
+    "opencode": ("opencode", ["run", "--format", "json"], "-m"),
+}
+
+# Sessions created by these runs show up in the agent's own history (and so in
+# Spooling). Start the prompt with this marker so they are recognizable, and so
+# `spooling summarize` never tries to summarize its own runs.
+RUN_MARKER = "spooling-summary:"
+
+
+def _parse_opencode_events(stdout: str) -> tuple[str, str | None]:
+    """Pull the answer text and session id out of ``opencode run --format json``."""
+    texts: list[str] = []
+    session_id = None
+    for line in stdout.splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(ev, dict):
+            continue
+        session_id = session_id or ev.get("sessionID")
+        part = ev.get("part") or {}
+        if ev.get("type") == "text" and isinstance(part.get("text"), str):
+            texts.append(part["text"])
+    return "".join(texts), session_id
+
+
+def _delete_opencode_session(session_id: str, *, ssh, cli_cmd) -> None:
+    """Best effort: remove the run's session so summaries don't pile up in
+    opencode's history (and get re-ingested by Spooling)."""
+    if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_id):
+        return
+    base = shlex.split(cli_cmd) if cli_cmd else ["opencode"]
+    cmd = base + ["session", "delete", session_id]
+    if ssh:
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", ssh,
+                " ".join(shlex.quote(a) for a in cmd)]
+    else:
+        argv = cmd
+    try:
+        subprocess.run(argv, capture_output=True, text=True, timeout=30,
+                       cwd=None if ssh else tempfile.gettempdir())
+    except Exception:
+        pass
+
+
+
+def _complete_cli(backend, transcript, *, model, ssh, cli_cmd, timeout) -> str:
+    """Summarize by running a coding agent's headless mode, here or over SSH.
+
+    With ``ssh`` set the command runs on that host (for example another Mac
+    where Claude Code is signed in) and the redacted transcript is piped
+    through the SSH connection.
+    """
+    exe, fixed, model_flag = CLI_BACKENDS[backend]
+    prompt = f"{RUN_MARKER} {SYSTEM_PROMPT}\n\n{_user_prompt(transcript)}"
+    cmd = (shlex.split(cli_cmd) if cli_cmd else [exe]) + fixed
+    if model:
+        cmd += [model_flag, model]
+
+    if ssh:
+        if ssh.startswith("-"):
+            raise FatalBackendError(f"invalid ssh host {ssh!r}")
+        # Run from /tmp so the agent doesn't load some project's rules or tools
+        # into a summarization request.
+        remote = "cd /tmp 2>/dev/null; " + " ".join(shlex.quote(a) for a in cmd)
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", ssh, remote]
+        cwd = None
+    else:
+        argv, cwd = cmd, tempfile.gettempdir()
+
+    try:
+        proc = subprocess.run(argv, input=prompt, capture_output=True, text=True,
+                              timeout=timeout, cwd=cwd)
+    except FileNotFoundError as e:
+        raise FatalBackendError(
+            f"could not run {argv[0]!r}: not found. Install it, use --ssh HOST to run it on "
+            f"another machine, or pass its full path with --cli-cmd."
+        ) from e
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"{exe} timed out after {timeout:.0f}s") from e
+
+    err = _ANSI.sub("", proc.stderr or "").strip()[-300:]
+    if ssh and proc.returncode == 255:
+        raise FatalBackendError(f"ssh to {ssh} failed: {err or 'connection error'}")
+    if proc.returncode == 127:
+        raise FatalBackendError(
+            f"'{exe}' not found{' on ' + ssh if ssh else ''}. Non-interactive shells often skip "
+            f"your PATH setup; pass its full path with --cli-cmd. {err}"
+        )
+    if proc.returncode != 0:
+        msg = f"{exe} exited {proc.returncode}: {err or '(no output)'}"
+        low = err.lower()
+        if "login" in low or "authenticat" in low or "api key" in low:
+            raise FatalBackendError(msg + f" (sign in to {exe} on that machine first)")
+        raise RuntimeError(msg)
+    out = _ANSI.sub("", proc.stdout or "")
+    if backend == "opencode":
+        out, session_id = _parse_opencode_events(out)
+        if session_id:
+            _delete_opencode_session(session_id, ssh=ssh, cli_cmd=cli_cmd)
+    if not out.strip() and err:
+        # opencode prints some failures to stderr but still exits 0.
+        raise RuntimeError(f"{exe} returned nothing: {err}")
+    return out
 
 
 @functools.lru_cache(maxsize=4)
@@ -250,6 +384,8 @@ def generate_summary(
     api_key: str | None = None,
     backend: str = "openai",
     region: str | None = None,
+    ssh: str | None = None,
+    cli_cmd: str | None = None,
     timeout: float = 120.0,
     client: httpx.Client | None = None,
 ) -> str:
@@ -263,8 +399,11 @@ def generate_summary(
                                    api_key=api_key, timeout=timeout, client=client)
     elif backend == "anthropic":
         content = _complete_anthropic(transcript, model=model, api_key=api_key, timeout=timeout)
-    else:
+    elif backend == "bedrock":
         content = _complete_bedrock(transcript, model=model, region=region, timeout=timeout)
+    else:
+        content = _complete_cli(backend, transcript, model=model, ssh=ssh,
+                                cli_cmd=cli_cmd, timeout=max(timeout, 180.0))
 
     summary = clean_summary(content)
     if not summary:
@@ -354,6 +493,8 @@ def is_fatal_error(exc: BaseException) -> bool:
     """True for errors that will repeat for every session (bad credentials,
     unreachable server, unknown model), so the run should stop instead of
     failing once per session."""
+    if isinstance(exc, FatalBackendError):
+        return True
     if isinstance(exc, httpx.ConnectError):
         return True
     if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (401, 403, 404):
