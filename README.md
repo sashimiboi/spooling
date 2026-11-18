@@ -235,6 +235,22 @@ spooling summarize --backend opencode --model amazon-bedrock/us.anthropic.claude
 - `--force` - regenerate even if a summary exists
 - `-y, --yes` - don't ask before sending text to a non-local endpoint
 
+#### Summarize one session
+
+Name the session by its id (or any unique prefix) and pick the backend:
+
+```bash
+spooling session list --title login            # find the id first
+spooling summarize ses_e6310bd1 --backend claude-code
+spooling summarize ses_e6310bd1 --backend claude-code --ssh my-other-mac
+spooling session show ses_e6310bd1             # read it back
+```
+
+- If the session already has a summary, nothing runs. Add `--force` to replace it, including a summary the provider wrote.
+- Naming a session skips the `--min-messages` filter, so short sessions work too. You can name several: `spooling summarize ID1 ID2 --backend claude-code`.
+- `--dry-run` shows what would run without calling a model, and `-y` skips the confirmation prompt.
+- To avoid typing the backend each time, `export SPOOLING_SUMMARY_BACKEND=claude-code`. There is no environment variable for `--ssh`.
+
 #### Using Claude Code or opencode
 
 The `claude-code` and `opencode` backends run the agent's headless mode and send the prompt on stdin, so there is no API key to set up: they use whatever login the agent already has. Both send the redacted transcript to that agent's provider, so Spooling asks for confirmation first.
