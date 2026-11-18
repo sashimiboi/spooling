@@ -138,7 +138,23 @@ class SpoolingConnection:
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     """Create all tables/indexes if they don't exist yet."""
     conn.executescript(SCHEMA_SQL)
+    _migrate_columns(conn)
     conn.commit()
+
+
+# (table, column, DDL type): columns added after the first release.
+# CREATE TABLE IF NOT EXISTS won't add these to a pre-existing table.
+_ADDED_COLUMNS = (
+    ("sessions", "summary", "TEXT"),
+    ("sessions", "summary_message_count", "INTEGER"),
+)
+
+
+def _migrate_columns(conn: sqlite3.Connection) -> None:
+    for table, column, ddl in _ADDED_COLUMNS:
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
 # ---------------------------------------------------------------------------

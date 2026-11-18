@@ -188,9 +188,46 @@ spooling session list --project myproject --cwd ~/code
 spooling session show ses_e6310bd1            # summary: model, tokens, cost, tools used
 spooling session show ses_e6310bd1 -m         # plus the full conversation text
 spooling session show ses_e6310bd1 -m --max-chars 300   # truncate each message
+spooling session list --summaries             # show each session's summary instead of its title
 ```
 
 `spooling session <id> -m` is shorthand for `spooling session show <id> -m`. `session show` accepts a full session id or any unique prefix. If a prefix matches several sessions, it lists them and exits so you can pick one.
+
+### `spooling summarize`
+
+Write a short summary for sessions that don't have one. Summaries show up in `session show`, `session list --summaries`, and the MCP `get_session` tool. They are local-only; `spooling push` does not send them.
+
+Some providers already supply a summary (Claude Code writes `summary` records). Those are used as-is and never overwritten unless you pass `--force`. For everything else, `summarize` calls a model you choose. Transcripts are secret-redacted before they are sent.
+
+| Backend | Use it for | Credentials |
+| --- | --- | --- |
+| `openai` (default) | Any OpenAI-compatible endpoint: local [Ollama](https://ollama.com), OpenAI, OpenRouter, vLLM, LiteLLM | none for local; `SPOOLING_SUMMARY_API_KEY` for hosted |
+| `anthropic` | The Anthropic API | `ANTHROPIC_API_KEY` |
+| `bedrock` | AWS Bedrock (Converse API). Uses `boto3`, which Spooling already installs | `AWS_BEARER_TOKEN_BEDROCK` (Bedrock API key; needs a recent `boto3`) or any normal AWS credentials, plus `AWS_REGION` |
+
+The default is a local Ollama daemon, so nothing leaves your machine. Any other backend sends redacted transcripts to a third party, so Spooling asks for confirmation first (skip with `--yes`).
+
+```bash
+spooling summarize --dry-run                  # see what would be summarized; calls no model
+spooling summarize -n 10 --days 7             # the 10 newest sessions from the last week
+spooling summarize ses_e6310bd1 --force       # (re)summarize one session
+
+spooling summarize --base-url https://api.openai.com/v1 --model gpt-4o-mini
+spooling summarize --backend anthropic        # defaults to claude-haiku-4-5
+spooling summarize --backend bedrock --region us-east-2 \
+  --model us.anthropic.claude-haiku-4-5-20251001-v1:0
+```
+
+- `-p, --project`, `--provider`, `-d, --days`, `-n, --limit` - choose which sessions
+- `--min-messages` - skip very short sessions (default 4)
+- `--backend` - `openai`, `anthropic` or `bedrock` (or set `SPOOLING_SUMMARY_BACKEND`)
+- `--model` - model name or id (or set `SPOOLING_SUMMARY_MODEL`). Defaults to `qwen2.5:7b` for `openai` and `claude-haiku-4-5` for `anthropic`; `bedrock` requires one, because Bedrock ids differ by region and account (use an inference profile id such as `us.anthropic.claude-haiku-4-5-20251001-v1:0`)
+- `--base-url` - endpoint for the `openai` backend (or `SPOOLING_SUMMARY_BASE_URL`; default `http://localhost:11434/v1`)
+- `--region` - AWS region for `bedrock` (default `AWS_REGION`)
+- `--force` - regenerate even if a summary exists
+- `-y, --yes` - don't ask before sending text to a non-local endpoint
+
+The run stops early on errors that would repeat for every session (bad credentials, an unreachable server, an unknown model). A summary Spooling generated is refreshed on the next run once the session has grown; `session show` tells you when that is the case.
 
 ### `spooling optimize`
 
