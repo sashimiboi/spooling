@@ -44,7 +44,7 @@ def test_summarize_is_documented_and_has_documented_options():
     from pathlib import Path
     readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
     out = _help("summarize")
-    for opt in ("--dry-run", "--force", "--backend", "--model", "--base-url", "--region", "--days", "--limit", "--min-messages", "--yes"):
+    for opt in ("--dry-run", "--force", "--backend", "--model", "--base-url", "--region", "--ssh", "--cli-cmd", "--days", "--limit", "--min-messages", "--yes"):
         assert opt in out
         assert opt in readme, f"README does not mention {opt}"
     assert "--summaries" in _help("session", "list")

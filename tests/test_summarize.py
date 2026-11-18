@@ -468,3 +468,173 @@ def test_bedrock_client_honors_aws_region_env(monkeypatch):
     sm._bedrock_client("eu-west-1")             # explicit region wins
     assert seen["region_name"] == "eu-west-1"
     sm._bedrock_client.cache_clear()
+
+
+# --- claude-code / opencode (shell out to an agent's headless mode) ----------
+
+import os
+import stat
+import subprocess
+
+
+def _fake_exe(tmp_path, name, body):
+    p = tmp_path / name
+    p.write_text("#!/bin/sh\n" + body)
+    p.chmod(p.stat().st_mode | stat.S_IEXEC)
+    return str(p)
+
+
+def test_claude_code_backend_pipes_prompt_on_stdin(tmp_path):
+    exe = _fake_exe(tmp_path, "claude",
+                    'echo "ARGS: $*" >&2; echo "CWD: $(pwd)" >&2; cat > "$0.stdin"; echo "Claude says hi."')
+    out = sm.generate_summary("[user] fix the bug", backend="claude-code", model="haiku", cli_cmd=exe)
+    assert out == "Claude says hi."
+    stdin = (tmp_path / "claude.stdin").read_text()
+    assert stdin.startswith(sm.RUN_MARKER)             # marker so the run is recognizable
+    assert "[user] fix the bug" in stdin               # transcript went via stdin, not argv
+
+
+def test_claude_code_args_and_model_flag(monkeypatch):
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen.update(argv=argv, **kw)
+        return subprocess.CompletedProcess(argv, 0, stdout="ok\n", stderr="")
+    monkeypatch.setattr(sm.subprocess, "run", fake_run)
+
+    sm.generate_summary("t", backend="claude-code", model="haiku")
+    assert seen["argv"] == ["claude", "-p", "--model", "haiku"]
+    assert seen["cwd"]                                  # not the user's project dir
+    assert "t" in seen["input"]
+
+    sm.generate_summary("t", backend="claude-code")     # no model -> agent's own default
+    assert seen["argv"] == ["claude", "-p"]
+
+
+def test_ssh_wraps_command_and_pipes_stdin(monkeypatch):
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen.update(argv=argv, **kw)
+        return subprocess.CompletedProcess(argv, 0, stdout="remote ok", stderr="")
+    monkeypatch.setattr(sm.subprocess, "run", fake_run)
+
+    out = sm.generate_summary("[user] hi", backend="claude-code", ssh="me@other-mac",
+                              cli_cmd="/opt/homebrew/bin/claude", model="sonnet")
+    assert out == "remote ok"
+    argv = seen["argv"]
+    assert argv[:4] == ["ssh", "-o", "BatchMode=yes", "-o"]
+    assert "me@other-mac" in argv
+    remote = argv[-1]
+    assert remote.startswith("cd /tmp")
+    assert "/opt/homebrew/bin/claude -p --model sonnet" in remote
+    assert "[user] hi" not in remote and "[user] hi" in seen["input"]   # transcript is not in argv
+    assert seen["cwd"] is None
+
+
+def test_ssh_rejects_option_injection():
+    with pytest.raises(sm.FatalBackendError, match="invalid ssh host"):
+        sm.generate_summary("t", backend="claude-code", ssh="-oProxyCommand=evil")
+
+
+def test_missing_executable_is_fatal(tmp_path):
+    with pytest.raises(sm.FatalBackendError, match="not found"):
+        sm.generate_summary("t", backend="claude-code", cli_cmd=str(tmp_path / "nope"))
+    assert sm.is_fatal_error(sm.FatalBackendError("x"))
+
+
+@pytest.mark.parametrize("code,stderr,fatal,match", [
+    (255, "ssh: connect to host x port 22: Connection refused", True, "ssh to h failed"),
+    (127, "sh: claude: command not found", True, "not found on h"),
+    (1, "Please login first", True, "sign in"),
+    (1, "something transient", False, "exited 1"),
+])
+def test_cli_backend_failure_modes(monkeypatch, code, stderr, fatal, match):
+    monkeypatch.setattr(sm.subprocess, "run",
+                        lambda argv, **kw: subprocess.CompletedProcess(argv, code, stdout="", stderr=stderr))
+    with pytest.raises(Exception, match=match) as ei:
+        sm.generate_summary("t", backend="claude-code", ssh="h")
+    assert sm.is_fatal_error(ei.value) is fatal
+
+
+def test_cli_output_ansi_is_stripped(tmp_path):
+    exe = _fake_exe(tmp_path, "claude", r'printf "\033[1mBold summary.\033[0m\n"')
+    assert sm.generate_summary("t", backend="claude-code", cli_cmd=exe) == "Bold summary."
+
+
+def test_opencode_parses_json_events_and_deletes_its_session(monkeypatch):
+    events = "\n".join(json.dumps(e) for e in [
+        {"type": "step_start", "sessionID": "ses_abc123", "part": {"type": "step-start"}},
+        {"type": "text", "sessionID": "ses_abc123", "part": {"type": "text", "text": "It fixed the login."}},
+        {"type": "step_finish", "sessionID": "ses_abc123", "part": {"type": "step-finish"}},
+    ])
+    calls = []
+
+    def fake_run(argv, **kw):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout=events if "run" in argv else "", stderr="")
+    monkeypatch.setattr(sm.subprocess, "run", fake_run)
+
+    out = sm.generate_summary("t", backend="opencode", model="amazon-bedrock/m")
+    assert out == "It fixed the login."
+    assert calls[0] == ["opencode", "run", "--format", "json", "-m", "amazon-bedrock/m"]
+    assert calls[1] == ["opencode", "session", "delete", "ses_abc123"]   # no leftover history
+
+
+def test_opencode_cleanup_failure_does_not_lose_the_summary(monkeypatch):
+    events = json.dumps({"type": "text", "sessionID": "ses_x", "part": {"type": "text", "text": "Done."}})
+
+    def fake_run(argv, **kw):
+        if "delete" in argv:
+            raise OSError("boom")
+        return subprocess.CompletedProcess(argv, 0, stdout=events, stderr="")
+    monkeypatch.setattr(sm.subprocess, "run", fake_run)
+    assert sm.generate_summary("t", backend="opencode") == "Done."
+
+
+def test_opencode_never_runs_delete_on_a_weird_session_id(monkeypatch):
+    events = json.dumps({"type": "text", "sessionID": "x; rm -rf ~", "part": {"type": "text", "text": "ok"}})
+    calls = []
+    monkeypatch.setattr(sm.subprocess, "run",
+                        lambda argv, **kw: calls.append(argv) or subprocess.CompletedProcess(argv, 0, stdout=events, stderr=""))
+    sm.generate_summary("t", backend="opencode")
+    assert len(calls) == 1                               # only the run, no delete
+
+
+def test_agent_backends_are_not_local():
+    assert not sm.is_local_backend("claude-code", "http://localhost:11434/v1")
+    assert not sm.is_local_backend("opencode", "http://localhost:11434/v1")
+
+
+def test_ollama_404_explains_how_to_fix_it():
+    c = _client(lambda r: httpx.Response(404, json={"error": "model not found"}))
+    with pytest.raises(sm.FatalBackendError, match="ollama pull qwen2.5:7b"):
+        sm.generate_summary("t", client=c)
+
+
+def test_cli_ssh_requires_an_agent_backend(conn):
+    res = CliRunner().invoke(cli, ["summarize", "--ssh", "host", "--dry-run"])
+    assert res.exit_code != 0 and "only apply" in res.output
+
+
+def test_cli_passes_ssh_and_cmd_through(conn, monkeypatch):
+    add_session(conn, "ses_hhhh000001", n_msgs=6)
+    seen = {}
+    monkeypatch.setattr(sm, "generate_summary", lambda t, **k: seen.update(k) or "ok")
+    res = CliRunner().invoke(cli, ["summarize", "--backend", "claude-code", "--ssh", "my-mac",
+                                   "--cli-cmd", "/x/claude", "-y"])
+    assert res.exit_code == 0, res.output
+    assert seen["ssh"] == "my-mac" and seen["cli_cmd"] == "/x/claude" and seen["backend"] == "claude-code"
+
+
+def test_cli_skips_its_own_summarizer_runs(conn, monkeypatch):
+    # An agent's history contains the summarizer's own runs; don't summarize those.
+    sid = "ses_iiii000001"
+    add_session(conn, sid, n_msgs=6)
+    conn.execute("UPDATE messages SET content = ? WHERE id = ?", (f"{sm.RUN_MARKER} You summarize...", f"{sid}-0"))
+    conn.commit()
+    called = []
+    monkeypatch.setattr(sm, "generate_summary", lambda t, **k: called.append(1) or "x")
+    res = CliRunner().invoke(cli, ["summarize", "--backend", "claude-code", "-y"])
+    assert res.exit_code == 0, res.output
+    assert not called and "summarizer run" in res.output

@@ -1337,16 +1337,20 @@ def session_show(session_id, messages, max_chars):
 @click.option("--limit", "-n", default=20, show_default=True, help="Max sessions to summarize")
 @click.option("--min-messages", default=4, show_default=True,
               help="Skip sessions shorter than this (ignored when ids are given)")
-@click.option("--backend", type=click.Choice(["openai", "anthropic", "bedrock"]), default=None,
+@click.option("--backend", type=click.Choice(["openai", "anthropic", "bedrock", "claude-code", "opencode"]), default=None,
               help="LLM backend (default: $SPOOLING_SUMMARY_BACKEND or openai = any OpenAI-compatible endpoint, e.g. local Ollama)")
 @click.option("--model", default=None, help="Model name or id (default: $SPOOLING_SUMMARY_MODEL, else qwen2.5:7b for openai, claude-haiku-4-5 for anthropic; required for bedrock)")
 @click.option("--region", default=None, help="AWS region for --backend bedrock (default: $AWS_REGION)")
+@click.option("--ssh", default=None, metavar="HOST",
+              help="Run --backend claude-code or opencode on this SSH host (e.g. another Mac where it is signed in)")
+@click.option("--cli-cmd", default=None,
+              help="Command for claude-code / opencode if it isn't on PATH (e.g. ~/.local/bin/claude); runs on --ssh HOST if set")
 @click.option("--base-url", default=None,
               help="Endpoint for --backend openai (default: $SPOOLING_SUMMARY_BASE_URL or local Ollama)")
 @click.option("--force", is_flag=True, help="Regenerate even if a summary exists (replaces provider summaries too)")
 @click.option("--dry-run", is_flag=True, help="List what would be summarized; call no model")
 @click.option("--yes", "-y", is_flag=True, help="Don't ask before sending text to a non-local endpoint")
-def summarize(session_ids, project, provider, days, limit, min_messages, backend, model, region, base_url, force, dry_run, yes):
+def summarize(session_ids, project, provider, days, limit, min_messages, backend, model, region, ssh, cli_cmd, base_url, force, dry_run, yes):
     """Generate short summaries for sessions that don't have one.
 
     Uses a model you configure; the default is a local Ollama daemon, so
@@ -1362,6 +1366,9 @@ def summarize(session_ids, project, provider, days, limit, min_messages, backend
       spooling summarize ses_e6310bd1 --force
       spooling summarize --base-url https://api.openai.com/v1 --model gpt-4o-mini
       spooling summarize --backend anthropic
+      spooling summarize --backend claude-code            # reuse your Claude Code login
+      spooling summarize --backend claude-code --ssh my-other-mac
+      spooling summarize --backend opencode --model amazon-bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0
       spooling summarize --backend bedrock --model us.anthropic.claude-haiku-4-5-20251001-v1:0
     """
     from spooling.db import get_connection
@@ -1378,7 +1385,15 @@ def summarize(session_ids, project, provider, days, limit, min_messages, backend
     except ValueError as e:
         console.print(f"[red]{e}[/red]")
         raise SystemExit(1)
-    where = base_url if backend == "openai" else f"{backend}" + (f" ({region})" if region else "")
+    if (ssh or cli_cmd) and backend not in sm.CLI_BACKENDS:
+        console.print("[red]--ssh and --cli-cmd only apply to --backend claude-code or opencode.[/red]")
+        raise SystemExit(1)
+    if backend == "openai":
+        where = base_url
+    elif backend in sm.CLI_BACKENDS:
+        where = backend + (f" on {ssh}" if ssh else "")
+    else:
+        where = backend + (f" ({region})" if region else "")
 
     resolved: list[str] = []
     for ref in session_ids:
@@ -1436,9 +1451,13 @@ def summarize(session_ids, project, provider, days, limit, min_messages, backend
             if not transcript:
                 console.print(f"[dim]skip[/dim]  {label} (no message text)")
                 continue
+            if transcript.startswith(f"[user] {sm.RUN_MARKER}"):
+                console.print(f"[dim]skip[/dim]  {label} (a summarizer run, not real work)")
+                continue
             try:
                 text = sm.generate_summary(
                     transcript, model=model, base_url=base_url, backend=backend, region=region,
+                    ssh=ssh, cli_cmd=cli_cmd,
                 )
             except Exception as e:
                 failed += 1
