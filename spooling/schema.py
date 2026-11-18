@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     estimated_cost_usd REAL DEFAULT 0,
     agent_version TEXT,
     model TEXT,
-    title TEXT
+    title TEXT,
+    summary TEXT,
+    summary_message_count INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_provider ON sessions(provider_id);

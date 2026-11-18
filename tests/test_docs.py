@@ -38,3 +38,14 @@ def test_readme_documents_the_team_commands():
         assert cmd in readme
     out = CliRunner().invoke(cli, ["cloud", "--help"]).output
     assert "teams" in out and "whoami" in out
+
+
+def test_summarize_is_documented_and_has_documented_options():
+    from pathlib import Path
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+    out = _help("summarize")
+    for opt in ("--dry-run", "--force", "--backend", "--model", "--base-url", "--region", "--days", "--limit", "--min-messages", "--yes"):
+        assert opt in out
+        assert opt in readme, f"README does not mention {opt}"
+    assert "--summaries" in _help("session", "list")
+    assert "--summaries" in readme

@@ -71,6 +71,9 @@ class ParsedSession:
     agent_version: str | None = None
     model: str | None = None
     title: str | None = None
+    # Provider-supplied summary, if the source already has one. Otherwise None
+    # and `spooling summarize` can fill it in later.
+    summary: str | None = None
     provider_id: str = "jsonl-session"
     trace: Optional[Trace] = None
     # Per-session incremental sync marker. Providers whose "file" holds many
@@ -329,6 +332,7 @@ def parse_session_file(
     # --- Pass 1: load all records into memory keyed by uuid -------------
     records: list[dict] = []
     by_uuid: dict[str, dict] = {}
+    summary: str | None = None
 
     try:
         with open(file_path) as f:
@@ -339,6 +343,13 @@ def parse_session_file(
                 try:
                     record = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                if record.get("type") == "summary":
+                    # Claude Code writes a one-line summary record when it
+                    # compacts or resumes a conversation. Last one wins.
+                    text = record.get("summary")
+                    if isinstance(text, str) and text.strip():
+                        summary = text.strip()
                     continue
                 if record.get("type") not in ("user", "assistant"):
                     continue
@@ -458,6 +469,7 @@ def parse_session_file(
         agent_version=agent_version,
         model=model,
         title=title,
+        summary=summary,
         provider_id=provider_id,
         trace=trace,
     )

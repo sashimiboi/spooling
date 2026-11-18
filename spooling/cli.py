@@ -1175,8 +1175,9 @@ def session():
 @click.option("--cwd", default=None, help="Filter by cwd substring")
 @click.option("--title", default=None, help="Filter by title substring")
 @click.option("--id", "id_part", default=None, help="Filter by session id substring")
+@click.option("--summaries", "-s", is_flag=True, help="Show each session's summary instead of its title (falls back to the title)")
 @click.option("--limit", "-n", default=20, help="Max sessions to return (default: 20)")
-def session_list(project, cwd, title, id_part, limit):
+def session_list(project, cwd, title, id_part, limit, summaries):
     """List local sessions with optional filters."""
     from spooling.db import get_connection
     from datetime import datetime as _dt
@@ -1201,6 +1202,7 @@ def session_list(project, cwd, title, id_part, limit):
 
     rows = conn.execute(
         f"""SELECT id, provider_id, project, title, started_at,
+                   summary,
                    message_count, tool_call_count, estimated_cost_usd
             FROM sessions {where_clause}
             ORDER BY started_at DESC NULLS LAST LIMIT ?""",
@@ -1216,7 +1218,7 @@ def session_list(project, cwd, title, id_part, limit):
     table.add_column("Session ID", style="cyan", no_wrap=True)
     table.add_column("Provider")
     table.add_column("Project")
-    table.add_column("Title")
+    table.add_column("Summary" if summaries else "Title")
     table.add_column("Started", style="dim")
     table.add_column("Msgs", justify="right")
     table.add_column("Tools", justify="right")
@@ -1234,7 +1236,7 @@ def session_list(project, cwd, title, id_part, limit):
             r["id"] or "",
             r["provider_id"] or "",
             _clean_project(r["project"] or ""),
-            (r["title"] or "")[:45],
+            ((r["summary"] or r["title"] or "")[:90] if summaries else (r["title"] or "")[:45]),
             ts,
             str(r["message_count"] or 0),
             str(r["tool_call_count"] or 0),
@@ -1287,6 +1289,18 @@ def session_show(session_id, messages, max_chars):
         style="blue",
     ))
 
+    if s.get("summary"):
+        console.print("[bold]Summary[/bold]")
+        console.print(s["summary"], markup=False, highlight=False)
+        generated_at = s.get("summary_message_count")
+        if generated_at is not None and (s.get("message_count") or 0) > generated_at:
+            console.print(
+                f"(session has grown since this was written; refresh with "
+                f"'spooling summarize {s['id']}')",
+                style="dim", markup=False, highlight=False,
+            )
+        console.print()
+
     if detail["tool_summary"]:
         table = Table(title="Tool Usage", show_lines=False)
         table.add_column("Tool", style="magenta")
@@ -1309,6 +1323,142 @@ def session_show(session_id, messages, max_chars):
                 console.print(f"Tools: {tools}", style="dim", markup=False)
     elif not messages and detail["messages"]:
         console.print(f"[dim]{len(detail['messages'])} messages — pass --messages to print the session text[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Summaries
+# ---------------------------------------------------------------------------
+
+@cli.command()
+@click.argument("session_ids", nargs=-1)
+@click.option("--project", "-p", default=None, help="Only sessions in this exact project")
+@click.option("--provider", default=None, help="Only sessions from this provider id")
+@click.option("--days", "-d", default=None, type=int, help="Only sessions started in the last N days")
+@click.option("--limit", "-n", default=20, show_default=True, help="Max sessions to summarize")
+@click.option("--min-messages", default=4, show_default=True,
+              help="Skip sessions shorter than this (ignored when ids are given)")
+@click.option("--backend", type=click.Choice(["openai", "anthropic", "bedrock"]), default=None,
+              help="LLM backend (default: $SPOOLING_SUMMARY_BACKEND or openai = any OpenAI-compatible endpoint, e.g. local Ollama)")
+@click.option("--model", default=None, help="Model name or id (default: $SPOOLING_SUMMARY_MODEL, else qwen2.5:7b for openai, claude-haiku-4-5 for anthropic; required for bedrock)")
+@click.option("--region", default=None, help="AWS region for --backend bedrock (default: $AWS_REGION)")
+@click.option("--base-url", default=None,
+              help="Endpoint for --backend openai (default: $SPOOLING_SUMMARY_BASE_URL or local Ollama)")
+@click.option("--force", is_flag=True, help="Regenerate even if a summary exists (replaces provider summaries too)")
+@click.option("--dry-run", is_flag=True, help="List what would be summarized; call no model")
+@click.option("--yes", "-y", is_flag=True, help="Don't ask before sending text to a non-local endpoint")
+def summarize(session_ids, project, provider, days, limit, min_messages, backend, model, region, base_url, force, dry_run, yes):
+    """Generate short summaries for sessions that don't have one.
+
+    Uses a model you configure; the default is a local Ollama daemon, so
+    nothing leaves your machine. Transcripts are secret-redacted before they
+    are sent. Sessions whose summary came from the provider are left alone
+    unless --force is given; summaries we generated are refreshed when the
+    session has grown since.
+
+    \b
+    Examples:
+      spooling summarize --dry-run
+      spooling summarize -n 10 --days 7
+      spooling summarize ses_e6310bd1 --force
+      spooling summarize --base-url https://api.openai.com/v1 --model gpt-4o-mini
+      spooling summarize --backend anthropic
+      spooling summarize --backend bedrock --model us.anthropic.claude-haiku-4-5-20251001-v1:0
+    """
+    from spooling.db import get_connection
+    from spooling import summarize as sm
+    from spooling.sessions import resolve_session_ids
+
+    backend = backend or sm.DEFAULT_BACKEND
+    if backend not in sm.BACKENDS:
+        console.print(f"[red]Unknown backend {backend!r}; choose from {', '.join(sm.BACKENDS)}.[/red]")
+        raise SystemExit(1)
+    base_url = base_url or sm.DEFAULT_BASE_URL
+    try:
+        model = sm.resolve_model(backend, model)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+    where = base_url if backend == "openai" else f"{backend}" + (f" ({region})" if region else "")
+
+    resolved: list[str] = []
+    for ref in session_ids:
+        matches = resolve_session_ids(ref)
+        if not matches:
+            console.print(f"[red]Session not found:[/red] {ref}")
+            raise SystemExit(1)
+        if len(matches) > 1:
+            console.print(f"[yellow]'{ref}' is ambiguous; matches:[/yellow]")
+            for m in matches:
+                console.print(f"  {m}")
+            raise SystemExit(1)
+        resolved.append(matches[0])
+
+    conn = get_connection()
+    try:
+        targets = sm.select_sessions(
+            conn, session_ids=resolved or None, project=project, provider=provider,
+            days=days, min_messages=min_messages, force=force, limit=limit,
+        )
+        if not targets:
+            console.print("[green]Nothing to summarize.[/green]")
+            if resolved and not force:
+                console.print("[dim]Named sessions that already have a summary need --force.[/dim]")
+            return
+
+        if dry_run:
+            table = Table(title=f"Would summarize {len(targets)} session(s)", show_lines=False)
+            table.add_column("Session ID", style="cyan", no_wrap=True)
+            table.add_column("Project")
+            table.add_column("Msgs", justify="right")
+            table.add_column("Title")
+            table.add_column("Existing summary", style="dim")
+            for t in targets:
+                table.add_row(
+                    t["id"], _clean_project(t["project"] or ""), str(t["message_count"] or 0),
+                    (t["title"] or "")[:40], "yes" if t["summary"] else "",
+                )
+            console.print(table)
+            console.print(f"[dim]Model: {model} via {where}[/dim]")
+            return
+
+        if not sm.is_local_backend(backend, base_url) and not yes:
+            console.print(
+                f"[yellow]{where} is not local.[/yellow] Redacted transcripts of "
+                f"{len(targets)} session(s) will be sent to it."
+            )
+            if not click.confirm("Continue?", default=False):
+                raise SystemExit(1)
+
+        ok = failed = 0
+        for t in targets:
+            label = f"{t['id'][:16]}  {(t['title'] or '')[:40]}"
+            transcript = sm.build_transcript(conn, t["id"])
+            if not transcript:
+                console.print(f"[dim]skip[/dim]  {label} (no message text)")
+                continue
+            try:
+                text = sm.generate_summary(
+                    transcript, model=model, base_url=base_url, backend=backend, region=region,
+                )
+            except Exception as e:
+                failed += 1
+                from rich.markup import escape
+                console.print(f"[red]fail[/red]  {escape(label)}: {escape(str(e))}", highlight=False)
+                # Bad credentials or an unreachable server fail every session the same way.
+                if sm.is_fatal_error(e):
+                    console.print(f"[dim]Stopping: this will fail for every session. Check the endpoint, model and credentials for {escape(where)}.[/dim]")
+                    break
+                continue
+            sm.store_summary(conn, t["id"], text, t["message_count"] or 0)
+            ok += 1
+            console.print(f"[green]ok[/green]    {label}")
+            console.print(f"      {text}", markup=False, highlight=False, style="dim")
+        console.print(f"\nSummarized {ok}, failed {failed}.")
+        if failed and not ok:
+            raise SystemExit(1)
+    finally:
+        conn.close()
+
 
 
 # ---------------------------------------------------------------------------

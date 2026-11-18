@@ -90,8 +90,8 @@ def _store_session(conn, session: ParsedSession):
     conn.execute(
         """INSERT INTO sessions (id, provider_id, project, cwd, git_branch, started_at, ended_at,
            message_count, tool_call_count, estimated_input_tokens, estimated_output_tokens,
-           estimated_cost_usd, agent_version, model, title)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+           estimated_cost_usd, agent_version, model, title, summary)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT (id) DO UPDATE SET
            provider_id = EXCLUDED.provider_id,
            message_count = EXCLUDED.message_count,
@@ -101,13 +101,16 @@ def _store_session(conn, session: ParsedSession):
            estimated_cost_usd = EXCLUDED.estimated_cost_usd,
            ended_at = EXCLUDED.ended_at,
            model = EXCLUDED.model,
-           title = EXCLUDED.title""",
+           title = EXCLUDED.title,
+           summary_message_count = CASE WHEN EXCLUDED.summary IS NOT NULL
+                                        THEN NULL ELSE sessions.summary_message_count END,
+           summary = COALESCE(EXCLUDED.summary, sessions.summary)""",
         (
             session.session_id, session.provider_id, _scrub(session.project), _scrub(session.cwd),
             _scrub(session.git_branch), session.started_at, session.ended_at, session.message_count,
             session.tool_call_count, session.estimated_input_tokens,
             session.estimated_output_tokens, cost, _scrub(session.agent_version),
-            _scrub(session.model), _scrub(session.title),
+            _scrub(session.model), _scrub(session.title), _scrub(session.summary),
         ),
     )
 
