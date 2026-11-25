@@ -28,7 +28,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _go(self):
         type(self).seen.append(f"{self.command} {self.path}")
-        payload = json.dumps(type(self).body if type(self).status == 200 else {"detail": "nope"}).encode()
+        payload = json.dumps(type(self).body if type(self).status == 200 else getattr(type(self), "error_body", {"detail": "nope"})).encode()
         self.send_response(type(self).status)
         if type(self).status == 429:
             self.send_header("Retry-After", "42")
@@ -192,6 +192,28 @@ def test_push_success_exits_zero(logged_in, server, monkeypatch):
     r = run("push", "--no-sync")
     assert r.exit_code == 0 and "Done." in r.output
     assert "POST /v1/sessions/batch" in server.handler.seen
+
+
+FULL = {"detail": "The Free plan allows 500 sessions per workspace. Delete old ones with `spooling cloud delete`, or upgrade at https://app.spooling.ai/settings?tab=billing"}
+
+
+def test_a_full_free_workspace_gets_a_clear_message_and_a_nonzero_exit(logged_in, server, monkeypatch):
+    server.handler.status, server.handler.error_body = 402, FULL
+    logged_in(server.url)
+    monkeypatch.setattr(cloud, "_collect_sessions", lambda **k: one_session())
+    r = run("push", "--no-sync")
+    assert r.exit_code == 1 and "Done." not in r.output
+    assert cloud.PLAN_LIMIT in r.output
+    assert "settings?tab=billing" in r.output and "spooling cloud delete" in r.output     # the server's own words, not raw JSON
+    assert "Nothing already pushed was removed" in r.output
+    assert '{"detail"' not in r.output
+
+
+def test_a_402_without_json_still_explains_itself():
+    req = httpx.Request("POST", "http://x/v1/sessions/batch")
+    e = httpx.HTTPStatusError("402", request=req, response=httpx.Response(402, text="<html>Payment Required</html>", request=req))
+    msg = cloud._explain_http(e)
+    assert msg.startswith(cloud.PLAN_LIMIT) and "Payment Required" in msg
 
 
 @pytest.mark.parametrize("status", [401, 500])

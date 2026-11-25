@@ -171,9 +171,23 @@ def _explain_error_impl(e: BaseException, base: str) -> str:
     return escape(str(e) or type(e).__name__)
 
 
+# Stable first words of the 402 explanation, so `watch` can tell "workspace is full" from a real failure.
+PLAN_LIMIT = "Free plan limit reached"
+
+
 def _explain_http(e: "httpx.HTTPStatusError") -> str:
     code = e.response.status_code
     body = escape(e.response.text[:200])
+    if code == 402:
+        try:
+            detail = e.response.json().get("detail")
+        except Exception:  # noqa: BLE001 - a proxy's HTML page, an empty body...
+            detail = None
+        return (
+            f"{PLAN_LIMIT}: this workspace can't take more on the Free plan.\n"
+            f"  {escape(str(detail)) if detail else body}\n"
+            f"  Nothing already pushed was removed; the rest of this push was not sent."
+        )
     if code == 401:
         return (
             f"HTTP 401: the server rejected your API key.\n"
@@ -927,6 +941,7 @@ def cloud_watch(interval: int, limit: int, batch: int, lookback: int, no_redact:
 
     console.print(f"[cyan]Watching local sessions → {base}[/cyan]")
     console.print(f"  interval: {interval}s · lookback: {lookback}m · starting watermark: {watermark or 'none (full first push)'}")
+    limit_warned = False
 
     while not stop["flag"]:
         cycle_started = datetime.now(timezone.utc)
@@ -954,9 +969,18 @@ def cloud_watch(interval: int, limit: int, batch: int, lookback: int, no_redact:
                 if redaction_count:
                     console.print(f"  [dim]Redacted {redaction_count} secret(s) before push[/dim]")
             total, rejected, err = _push_batches(sessions, batch, base, headers, console.print)
-            if err:
+            if err and err.startswith(PLAN_LIMIT):
+                # A full workspace will not fix itself, so say it clearly once and then stay quiet instead of repeating it.
+                if not limit_warned:
+                    console.print(f"[red]{err}[/red]")
+                    console.print("  [dim]Watch keeps running and tries again each cycle, so it resumes as soon as you upgrade or free some space.[/dim]")
+                    limit_warned = True
+                else:
+                    console.print(f"[dim]{ts}[/dim] [yellow]still at the Free plan limit; nothing was sent[/yellow]")
+            elif err:
                 console.print(f"[red]{err.splitlines()[0]}[/red] (will retry next cycle)")
             else:
+                limit_warned = False
                 # Advance watermark to the cycle start; the lookback window catches
                 # sessions whose started_at slid backwards or whose messages were
                 # appended after the original started_at.
