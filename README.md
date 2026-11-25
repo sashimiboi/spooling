@@ -451,6 +451,21 @@ spooling push --dry-run       # show what would be pushed
 
 `push` ingests new provider sessions into the local database before uploading, so you don't need to run `spooling sync` first. The server upserts by session id, so re-running is safe.
 
+#### When a Free workspace is full
+
+The Free plan caps each workspace (500 sessions, 100,000 messages, 5,000 traces). When a push would go past a cap the server answers
+`402`, and `spooling push` stops with a clear message and a non-zero exit code:
+
+```
+Free plan limit reached: this workspace can't take more on the Free plan.
+  The Free plan allows 500 sessions per workspace. Delete old ones with `spooling cloud delete`, or upgrade at https://app.spooling.ai/settings?tab=billing
+  Nothing already pushed was removed; the rest of this push was not sent.
+```
+
+Nothing you have already pushed is removed, and sessions already in the workspace can still be updated by a batch that adds no new
+ones. Free space with `spooling cloud delete`, or upgrade from the link. `spooling cloud watch` shows the message once and then a
+short "still at the Free plan limit" line each cycle, and carries on automatically once there is room.
+
 ### Push only some sessions, or to a specific team
 
 **Which team gets the sessions** is decided by the API key you are logged in with. Each key belongs to one workspace (personal or a team), and `spooling push` sends to that workspace. Mint a key for the team in the app, then log in with it:
